@@ -1,3 +1,3 @@
 # Symulacja krakowskiej sieci tramwajowej z opóźnieniami
 ## Dane
-Dane GTFS Realtime są zbierane od 18.10.2026
+Dane GTFS Realtime są zbierane od 18.10.2026. Trip updates ma przykładowy plik, poniewaz cały dzień przekracza limit GitHuba 🙂
