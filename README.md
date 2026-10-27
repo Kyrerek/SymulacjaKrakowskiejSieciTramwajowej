@@ -8,3 +8,33 @@ Minusem jest mniej efektowna wizualizacja, ale ten model powinien być szybszy d
 Ewentualnością jest model komórkowy, który jest raczej trudniejszy do implementacji i będzie wolniej działał przez złożoność obliczeniową. 
 Jednak da to lepszą wizualizacje, model ruchu pojazdów (hamowanie i wizualne kolejki przed przystankami) i pozwoli nadawać komórkom właściwości, np. bycie sygnalizacją (problem: dane o cyklu świateł).
 Ogólny zarys: cała sieć tramwajowa jest złożona z komórek, po których poruszają się tramwaje z jakąś prędkością (n komórek na sekunde).
+
+## Środowisko
+
+* **Python:** 3.12
+* **Zależności:** Pozostałe biblioteki wraz z ich wersjami znajdują się w pliku `requirements.txt`.
+
+## Instalacja
+
+1. Tworzenie i aktywacja wirtualnego środowiska:
+
+**Linux / macOS:**
+```bash
+python3.12 -m venv venv
+source venv/bin/activate
+```
+**Windows:**
+```bash
+py -3.12 -m venv venv
+venv\Scripts\activate
+```
+
+2. Instalowanie wymaganych pakietów:
+```bash
+pip install -r requirements.txt
+```
+
+## Uruchomienie aplikacji
+```bash
+streamlit run main.py
+```

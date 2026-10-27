@@ -1,0 +1,9 @@
+simpy>=4.1.0
+pandas>=2.2.0
+geopandas>=0.14.0
+numpy>=1.26.0
+streamlit>=1.31.0
+folium>=0.16.0
+streamlit-folium>=0.18.0
+matplotlib>=3.8.0
+plotly>=5.18.0

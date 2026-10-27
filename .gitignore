@@ -1,0 +1,39 @@
+# === Wirtualne środowiska (Virtual environments) ===
+venv/
+.venv/
+env/
+ENV/
+
+# === Python / Pamięć podręczna (Byte-compiled / Cache) ===
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# === Edytory i IDE (VS Code, PyCharm itp.) ===
+.vscode/*
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+
+# === Streamlit ===
+.streamlit/secrets.toml
+
+# === Zmienne środowiskowe i klucze API ===
+.env
+.env.local
+
+# === Duże pliki danych / GTFS (często przekraczają limity GitHuba) ===
+*.zip
+*.pbf
+*.parquet
+# Jeśli dane trzymasz w osobnych folderach, możesz zignorować całe katalogi:
+# data/raw/
+# data/processed/
+
+# === Pliki tymczasowe systemu operacyjnego ===
+.DS_Store
+Thumbs.db
