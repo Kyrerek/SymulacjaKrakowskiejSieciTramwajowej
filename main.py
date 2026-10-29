@@ -38,10 +38,12 @@ for stop in stops:
 
 # tramwaje
 trams = [
-  Tram(id_=0,route=[stops[0],stops[1]],loop_route_num=3,name="Tram")
+  Tram(id_=0,route=[stops[0],stops[1]],loop_route_num=3,name="Tram1"),
+  Tram(id_=0,route=[stops[1],stops[0]],loop_route_num=3,name="Tram2")
 ]
 
 trams[0].start()
+trams[1].start()
 
 tram_manager = TramMotion(
     start_time=datetime(2026, 10, 27, 12, 0, 0),
