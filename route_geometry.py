@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 import tram_data
+from models import Point, Stop, StopRoad
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,111 @@ class RouteGeometry:
         return {"type": "FeatureCollection", "features": features}
 
 
+@dataclass
+class RouteRoadNetwork:
+    """Trasa przygotowana dla silnika ruchu.
+
+    ``stops`` i ``roads`` są bezpośrednio zgodne z klasami w katalogu
+    ``models``. Każdy obiekt ``StopRoad`` dostaje dodatkowo atrybut
+    ``length_m`` z długością geometryczną odcinka.
+    """
+    geometry: RouteGeometry
+    stops: list[Stop]
+    roads: list[StopRoad]
+    stop_shape_indexes: list[int]
+
+
+def _closest_shape_index(
+    stop: RouteStop,
+    points: tuple[GeoPoint, ...],
+    first_index: int,
+) -> int:
+    """Najbliższy punkt kształtu, szukany od wskazanego indeksu.
+
+    Ograniczenie zakresu utrzymuje kolejność przystanków nawet gdy trasa
+    zawraca lub przechodzi blisko własnego wcześniejszego fragmentu.
+    """
+    if first_index >= len(points):
+        raise ValueError("Brak punktów kształtu dla kolejnego przystanku")
+    stop_point = Point(stop.lat, stop.lon)
+    return min(
+        range(first_index, len(points)),
+        key=lambda index: stop_point.distance_to(Point(points[index].lat, points[index].lon)),
+    )
+
+
+def build_stop_roads(
+    tram_number,
+    direction_id,
+    dates=None,
+    data_dir: Path = tram_data.DATA_DIR,
+) -> RouteRoadNetwork:
+    """Buduje odcinki torowiska między kolejnymi przystankami.
+
+    Przystanek zostaje dopasowany do najbliższego punktu odpowiedniego
+    ``shape`` GTFS. Dla każdej pary sąsiadujących przystanków powstaje jeden
+    ``StopRoad`` zawierający punkty rzeczywistego przebiegu torowiska.
+
+    Przykład::
+
+        network = build_stop_roads("4", direction_id=0)
+        tram = Tram(1, network.stops, loop_route_num=1, name="Linia 4")
+    """
+    geometry = get_route_geometry(tram_number, direction_id, dates, data_dir)
+    if geometry is None:
+        raise ValueError(f"Nie znaleziono linii {tram_number}, kierunek {direction_id}")
+    if isinstance(geometry, list):  # Ochrona przed wywołaniem bez direction_id.
+        raise ValueError("direction_id jest wymagany do budowy odcinków")
+    if len(geometry.stops) < 2:
+        raise ValueError("Trasa musi mieć co najmniej dwa przystanki")
+    if len(geometry.points) < 2:
+        raise ValueError("Geometria trasy musi mieć co najmniej dwa punkty")
+
+    stop_shape_indexes: list[int] = []
+    search_from = 0
+    for stop in geometry.stops:
+        index = _closest_shape_index(stop, geometry.points, search_from)
+        stop_shape_indexes.append(index)
+        search_from = index
+
+    model_stops = [
+        Stop(id_=stop.stop_id, lat=stop.lat, lon=stop.lon, name=stop.name)
+        for stop in geometry.stops
+    ]
+    roads: list[StopRoad] = []
+    for index, (start, end) in enumerate(zip(model_stops, model_stops[1:])):
+        start_shape_index = stop_shape_indexes[index]
+        end_shape_index = stop_shape_indexes[index + 1]
+
+        # Użycie dokładnych współrzędnych przystanków zapewnia, że marker
+        # tramwaju zaczyna i kończy odcinek dokładnie na przystanku.
+        segment_points = [Point(start.lat, start.lon)]
+        segment_points.extend(
+            Point(point.lat, point.lon)
+            for point in geometry.points[start_shape_index:end_shape_index + 1]
+        )
+        segment_points.append(Point(end.lat, end.lon))
+
+        # Usunięcie bezpośrednio powtórzonych punktów zapobiega odcinkom
+        # o długości zero podczas interpolacji w motion.py.
+        unique_points = [segment_points[0]]
+        for point in segment_points[1:]:
+            if point.lat != unique_points[-1].lat or point.lon != unique_points[-1].lon:
+                unique_points.append(point)
+
+        road = StopRoad(start=start, end=end, points=unique_points)
+        road.length_m = sum(
+            first.distance_to(second)
+            for first, second in zip(unique_points, unique_points[1:])
+        )
+        roads.append(road)
+
+    for stop in model_stops:
+        stop.add_roads([road for road in roads if road.start.id == stop.id])
+
+    return RouteRoadNetwork(geometry, model_stops, roads, stop_shape_indexes)
+
+
 def get_route_geometries(
     trams=None,
     dates=None,
@@ -136,7 +242,7 @@ def get_route_geometries(
             RouteStop(
                 stop_id=str(row.stop_id),
                 name=str(row.stop_name),
-                code="" if pd.isna(row.stop_code) else str(row.stop_code),
+                code="" if pd.isna(row.stop_number) else str(row.stop_number),
                 station_code="" if pd.isna(row.station_code) else str(row.station_code),
                 sequence=int(row.stop_sequence),
                 lat=float(row.stop_lat),
