@@ -38,15 +38,13 @@ for stop in stops:
 
 # tramwaje
 trams = [
-  Tram(id_=0,route=[stops[0],stops[1]],name="Tram")
+  Tram(id_=0,route=[stops[0],stops[1]],loop_route_num=3,name="Tram")
 ]
 
 trams[0].start()
 
 tram_manager = TramMotion(
     start_time=datetime(2026, 10, 27, 12, 0, 0),
-    steps=30,
-    travel_minutes=5
 )
 
 features = tram_manager.run_trams(trams)
@@ -81,7 +79,7 @@ for stop in stops:
 TimestampedGeoJson(
     geojson_data,
     period="PT10S",
-    duration="PT11S",
+    duration="PT9S",
     add_last_point=False,
     auto_play=False,
     loop=False,

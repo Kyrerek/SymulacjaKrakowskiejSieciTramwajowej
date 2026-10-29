@@ -1,13 +1,13 @@
 from datetime import timedelta, datetime
-from models import Tram, TramStatus
+from models import Tram, TramStatus, Point
 import simpy
+import math
 
 class TramMotion:
-    def __init__(self, start_time: datetime, steps: int, travel_minutes: int, env=simpy.Environment()):
+    def __init__(self, start_time: datetime, target_time_step = 10, env=simpy.Environment()):
         self.env = env
         self.start_time = start_time
-        self.steps = steps
-        self.travel_minutes = travel_minutes
+        self.target_time_step = target_time_step
         self.features = []
 
     def run_trams(self, trams: list[Tram]):
@@ -17,19 +17,21 @@ class TramMotion:
         return self.features
 
     def _run_tram(self, tram: Tram):
-        """
-        Symulacja z customowym czasem (offsetem w sekundach) dla każdego punktu.
-        Format: (longitude, latitude, sekundy_od_startu)
-        """
-        route_data = [
-            (19.9450, 50.0647, 0),    # Dworzec Główny (Start: 0. sekunda)
-            (19.9430, 50.0652, 20),   # Punkt pośredni 1 (po 20 sekundach)
-            (19.9412, 50.0655, 50),   # Zakręt przy Basztowej (po 50 sekundach)
-            (19.9390, 50.0652, 70),   # Punkt pośredni 2 (po 70 sekundach)
-            (19.9370, 50.0648, 100),  # Basztowa LOT (po 100 sekundach)
-            (19.9350, 50.0640, 130),  # Punkt pośredni 3 (po 130 sekundach)
-            (19.9332, 50.0632, 160)   # Teatr Bagatela (Koniec: po 160 sekundach)
-        ]
+        curStopIdx = 0
+        time = 0
+        for i in range(tram.loop_route_num):
+            for idx in range(len(tram.route)):
+                time = yield from self._run_points_tram(tram,idx,time)
+    
+    def _run_points_tram(self, tram: Tram,curStopIdx: int,startTime: int):
+        nextStopId = curStopIdx + 1
+        if (nextStopId == len(tram.route)):
+            nextStopId = 0
+
+        matching_road = list(filter(lambda r: r.end.id == tram.route[nextStopId].id,tram.route[curStopIdx].roads))[0]
+        route_data = self._route_data_by_duration(matching_road.points,startTime,200)
+        _, _, time = route_data[-1]
+        
 
         for lon, lat, offset_seconds in route_data:
             # Wyliczamy czas na podstawie indywidualnego offsetu dla tego punktu
@@ -58,4 +60,48 @@ class TramMotion:
             
             yield self.env.timeout(1)
 
-        tram.status = TramStatus.TERMINATED
+        return time
+
+
+
+
+
+    def _route_data_by_duration(self, path: list[Point], start_time: float, travel_time_sec: float, target_time_step: int = 10):
+        if len(path) < 2 or travel_time_sec <= 0:
+            return []
+
+        cum_distances = [0.0]
+        for i in range(1, len(path)):
+            d = path[i-1].distance_to(path[i])
+            cum_distances.append(cum_distances[-1] + d)
+
+        total_length = cum_distances[-1]
+
+
+        steps = int(travel_time_sec // target_time_step) + 1
+        route_data = []
+
+        for step in range(steps):
+            elapsed_sec = step * target_time_step
+            if elapsed_sec > travel_time_sec:
+                break
+
+            # Postęp czasowy na odcinku (od 0.0 do 1.0)
+            progress = elapsed_sec / travel_time_sec
+            target_dist = progress * total_length
+            current_timestamp = start_time + elapsed_sec
+
+            # Znajdujemy fizyczny punkt na łuku odpowiadający przejechanemu dystansowi
+            for i in range(len(cum_distances) - 1):
+                if cum_distances[i] <= target_dist <= cum_distances[i+1]:
+                    seg_len = cum_distances[i+1] - cum_distances[i]
+                    fraction = (target_dist - cum_distances[i]) / seg_len if seg_len > 0 else 0
+
+                    p1, p2 = path[i], path[i+1]
+                    lat = p1.lat + fraction * (p2.lat - p1.lat)
+                    lon = p1.lon + fraction * (p2.lon - p1.lon)
+
+                    route_data.append((lon, lat, current_timestamp))
+                    break
+
+        return route_data
