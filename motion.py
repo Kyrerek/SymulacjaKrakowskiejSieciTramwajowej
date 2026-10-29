@@ -61,7 +61,7 @@ class TramMotion:
 
 
     def _generate_dwell_data(self, point: Point, start_time: float, target_time_step: int = 10):
-        dwell_time_sec = 100
+        dwell_time_sec = 30
         
         if dwell_time_sec <= 0:
             return []
