@@ -21,8 +21,9 @@ class TramMotion:
         time = 0
         for i in range(tram.loop_route_num):
             for idx in range(len(tram.route)):
+                next_stop_idx = (idx + 1) % len(tram.route)
                 time = yield from self._run_route_data(tram,self._generate_arrival_data(tram,idx,time))
-                time = yield from self._run_route_data(tram,self._generate_dwell_data(tram.route[idx],time))
+                time = yield from self._run_route_data(tram,self._generate_dwell_data(tram.route[next_stop_idx],time))
 
 
     def _run_route_data(self, tram,route_data):
