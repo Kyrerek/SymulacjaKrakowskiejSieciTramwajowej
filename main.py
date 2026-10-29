@@ -142,4 +142,17 @@ st.caption(
 if skipped_lines:
     st.warning("Pominięte linie bez kompletnej trasy w obu kierunkach: " + ", ".join(skipped_lines))
 
+
+# Minimalny, czysty CSS usuwający problematyczny element ::before
+clean_css = """
+<style>
+.timecontrol-speed::before {
+    display: none !important;
+}
+</style>
+"""
+m.get_root().html.add_child(folium.Element(clean_css))
+
+
+
 st_folium(m, width="100%", height=700, returned_objects=[])
