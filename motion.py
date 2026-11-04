@@ -60,17 +60,17 @@ class TramMotion:
         return time
 
 
-    def _generate_dwell_data(self, point: Point, start_time: float, target_time_step: int = 10):
+    def _generate_dwell_data(self, point: Point, start_time: float):
         dwell_time_sec = 30
         
         if dwell_time_sec <= 0:
             return []
 
-        steps = int(dwell_time_sec // target_time_step)
+        steps = int(dwell_time_sec // self.target_time_step)
         dwell_data = []
 
         for step in range(1, steps + 1):
-            time_sec = start_time + step * target_time_step
+            time_sec = start_time + step * self.target_time_step
             dwell_data.append((point.lon, point.lat, time_sec))
 
         return dwell_data
@@ -86,7 +86,7 @@ class TramMotion:
 
 
 
-    def _route_data_by_duration(self, path: list[Point], start_time: float, travel_time_sec: float, target_time_step: int = 10):
+    def _route_data_by_duration(self, path: list[Point], start_time: float, travel_time_sec: float):
             if len(path) < 2 or travel_time_sec <= 0:
                 return []
     
@@ -98,11 +98,11 @@ class TramMotion:
             total_length = cum_distances[-1]
     
     
-            steps = int(travel_time_sec // target_time_step) + 1
+            steps = int(travel_time_sec // self.target_time_step) + 1
             route_data = []
     
             for step in range(steps):
-                elapsed_sec = step * target_time_step
+                elapsed_sec = step * self.target_time_step
                 if elapsed_sec > travel_time_sec:
                     break
     
