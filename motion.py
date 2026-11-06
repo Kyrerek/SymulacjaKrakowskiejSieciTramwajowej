@@ -1,5 +1,5 @@
 from datetime import timedelta, datetime
-from models import Tram, TramStatus, Point
+from models import Tram, Stop, Point,StopRoad
 import simpy
 import math
 
@@ -23,7 +23,7 @@ class TramMotion:
             for idx in range(len(tram.route)):
                 next_stop_idx = (idx + 1) % len(tram.route)
                 time = yield from self._run_route_data(tram,self._generate_arrival_data(tram,idx,time))
-                time = yield from self._run_route_data(tram,self._generate_dwell_data(tram.route[next_stop_idx],time))
+                time = yield from self._run_route_data(tram,self._generate_dwell_data(tram,tram.route[next_stop_idx],time))
 
 
     def _run_route_data(self, tram,route_data):
@@ -60,8 +60,8 @@ class TramMotion:
         return time
 
 
-    def _generate_dwell_data(self, point: Point, start_time: float):
-        dwell_time_sec = 30
+    def _generate_dwell_data(self, tram: Tram, stop: Stop, start_time: float):
+        dwell_time_sec = tram.dwell_delay(start_time,stop)
         
         if dwell_time_sec <= 0:
             return []
@@ -71,7 +71,7 @@ class TramMotion:
 
         for step in range(1, steps + 1):
             time_sec = start_time + step * self.target_time_step
-            dwell_data.append((point.lon, point.lat, time_sec))
+            dwell_data.append((stop.lon, stop.lat, time_sec))
 
         return dwell_data
 
@@ -80,8 +80,8 @@ class TramMotion:
         if (nextStopId == len(tram.route)):
             nextStopId = 0
 
-        matching_road = list(filter(lambda r: r.end.id == tram.route[nextStopId].id,tram.route[curStopIdx].roads))[0]
-        arrival_data = self._route_data_by_duration(matching_road.points,startTime,400)
+        matching_road: StopRoad = list(filter(lambda r: r.end.id == tram.route[nextStopId].id,tram.route[curStopIdx].roads))[0]
+        arrival_data = self._route_data_by_duration(matching_road.points,startTime,matching_road.arrival_delay(startTime))
         return arrival_data
 
 
