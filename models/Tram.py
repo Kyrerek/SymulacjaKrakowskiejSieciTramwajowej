@@ -17,5 +17,5 @@ class Tram(Point):
         self.start = TramStatus.ARRIVAL
 
 
-    def dwell_delay(self,time,stop: Stop):
-        return self.delay_(time,stop.enter_tram_num(time,self))
+    def dwell_delay(self,time_sec,stop: Stop):
+        return self.delay_(time_sec,stop.enter_tram_num(time_sec,self))

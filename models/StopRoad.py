@@ -12,5 +12,5 @@ class StopRoad:
         self.points = points
         self.delay_ = delay
 
-    def arrival_delay(self,time):
-        return self.delay_(time)
+    def arrival_delay(self,time_sec):
+        return self.delay_(time_sec)

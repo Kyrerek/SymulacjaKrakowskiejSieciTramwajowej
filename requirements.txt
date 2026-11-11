@@ -7,3 +7,5 @@ folium>=0.16.0
 streamlit-folium>=0.18.0
 matplotlib>=3.8.0
 plotly>=5.18.0
+scipy>=1.12.0
+scikit-learn>=1.4.0

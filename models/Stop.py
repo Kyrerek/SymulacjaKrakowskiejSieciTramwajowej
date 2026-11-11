@@ -19,5 +19,5 @@ class Stop(Point):
         self.roads = roads
 
 
-    def enter_tram_num(self,time,tram: Tram):
-        return self.enter_tram_num_(time,tram)
+    def enter_tram_num(self,time_sec,tram: Tram):
+        return self.enter_tram_num_(time_sec,tram)

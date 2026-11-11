@@ -75,7 +75,7 @@ class TramMotion:
 
         return dwell_data
 
-    def _generate_arrival_data(self, tram: Tram,curStopIdx: int,startTime: int):
+    def _generate_arrival_data(self, tram: Tram,curStopIdx: int,startTime: float):
         nextStopId = curStopIdx + 1
         if (nextStopId == len(tram.route)):
             nextStopId = 0
