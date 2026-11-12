@@ -1,11 +1,15 @@
 """Mapa i prosta animacja wszystkich linii tramwajowych z GTFS."""
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 
 import folium
 from folium.plugins import TimestampedGeoJson
 import streamlit as st
 from streamlit_folium import st_folium
 import random
+
+import pandas as pd
+
+import tram_data
 
 from models import StopRoad, Tram
 from motion import TramMotion
@@ -41,17 +45,84 @@ st.set_page_config(page_title="Symulacja sieci tramwajowej Krakowa", layout="wid
 st.title("Symulacja krakowskiej sieci tramwajowej")
 st.caption("Wszystkie linie: rzeczywista geometria GTFS i demonstracyjna animacja jazdy.")
 
+@st.cache_data
+def feed_date_range():
+    cal_dates = tram_data._read("calendar_dates.txt", tram_data.DATA_DIR)
+    cal = tram_data._read("calendar.txt", tram_data.DATA_DIR)
+    values = []
+    if cal_dates is not None and not cal_dates.empty:
+        values += list(cal_dates["date"])
+    if cal is not None and not cal.empty:
+        values += list(cal["start_date"]) + list(cal["end_date"])
+    if not values:
+        today = date.today()
+        return today, today
+    parsed = pd.to_datetime(pd.Series(values), format="%Y%m%d")
+    return parsed.min().date(), parsed.max().date()
+
+
+@st.cache_data
+def lines_active_in(days):
+    trips = tram_data._line_trips(None, list(days), tram_data.DATA_DIR)
+    return set(trips["route_short_name"].astype(str))
+
+
+feed_min, feed_max = feed_date_range()
+default_day = min(max(date(2026, 10, 27), feed_min), feed_max)
+
 with st.sidebar:
+    st.header("Czas symulacji")
+    period_mode = st.radio("Zakres", ["Jeden dzień", "Okres"], horizontal=True)
+    if period_mode == "Jeden dzień":
+        sim_day = st.date_input(
+            "Data", value=default_day, min_value=feed_min, max_value=feed_max, format="DD.MM.YYYY"
+        )
+        col_from, col_to = st.columns(2)
+        with col_from:
+            from_time = st.time_input("Od", value=time(12, 0), step=timedelta(minutes=15))
+        with col_to:
+            to_time = st.time_input("Do", value=time(14, 0), step=timedelta(minutes=15))
+        start_time = datetime.combine(sim_day, from_time)
+        stop_time = datetime.combine(sim_day, to_time)
+    else:
+        date_range = st.date_input(
+            "Daty",
+            value=(default_day, min(default_day + timedelta(days=1), feed_max)),
+            min_value=feed_min,
+            max_value=feed_max,
+            format="DD.MM.YYYY",
+        )
+        if not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
+            st.info("Wybierz datę początkową i końcową.")
+            st.stop()
+        start_day, end_day = date_range
+        col_from, col_to = st.columns(2)
+        with col_from:
+            from_time = st.time_input("Godzina startu", value=time(12, 0), step=timedelta(minutes=15))
+        with col_to:
+            to_time = st.time_input("Godzina końca", value=time(12, 0), step=timedelta(minutes=15))
+        start_time = datetime.combine(start_day, from_time)
+        stop_time = datetime.combine(end_day, to_time)
+
     st.header("Widok mapy")
     show_stops = st.checkbox("Pokaż przystanki", value=False)
 
-lines = get_available_lines()
-if not lines:
-    st.error("Nie znaleziono linii w data/GTFS_KRK_T/routes.txt.")
+if stop_time <= start_time:
+    st.error("Koniec symulacji musi być późniejszy niż początek.")
     st.stop()
 
-start_time = datetime(2026, 10, 27, 12, 0, 0)
-stop_time = datetime(2026, 10, 28, 12, 0, 0)
+sim_days = tuple(
+    pd.Timestamp(start_time.date() + timedelta(days=i))
+    for i in range((stop_time.date() - start_time.date()).days + 1)
+)
+active_lines = lines_active_in(sim_days)
+
+lines = [line for line in get_available_lines() if str(line) in active_lines]
+if not lines:
+    st.error("Brak kursujących linii w wybranym okresie.")
+    st.stop()
+
+sim_duration_sec = int((stop_time - start_time).total_seconds())
 features = []
 display_roads = []
 display_stops = []
@@ -78,7 +149,7 @@ for line_index, line in enumerate(lines):
     line_colors[str(line)] = color
 
 
-    random_start_sec = random.randint(0, 3600)
+    random_start_sec = random.randint(0, min(3600, sim_duration_sec))
     random_loops = random.randint(1, 3)
 
     tram = Tram(
@@ -159,6 +230,7 @@ TimestampedGeoJson(
 ).add_to(m)
 
 st.caption(
+    f"{start_time:%d.%m.%Y %H:%M} – {stop_time:%d.%m.%Y %H:%M} · "
     f"{len(loaded_lines)} linii · {len(features)} punktów animacji · "
     "czas przejazdu i postoje są obecnie stałe w motion.py"
 )
