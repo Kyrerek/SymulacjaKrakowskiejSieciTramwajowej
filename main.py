@@ -55,6 +55,8 @@ display_roads = []
 display_stops = []
 loaded_lines = []
 skipped_lines = []
+trams = []
+line_colors = {}
 
 for line_index, line in enumerate(lines):
     directions = get_route_geometry(line)
@@ -77,14 +79,26 @@ for line_index, line in enumerate(lines):
         loop_route_num=1,
         name=f"Linia {line}",
     )
-    line_features = TramMotion(start_time=start_time, target_time_step=10).run_trams([tram])
-    for feature in line_features:
-        feature["properties"]["iconoptions"]["color"] = color
-        feature["properties"]["iconoptions"]["fillColor"] = color
-    features.extend(line_features)
+
+    trams.append(tram)
     display_roads.extend((road, line, color) for road in outbound.roads + inbound.roads)
     display_stops.extend(cyclic_stops)
     loaded_lines.append(line)
+
+features = TramMotion(start_time=start_time, target_time_step=10).run_trams(trams)
+
+for feature in features:
+    props = feature.get("properties", {})
+    # Dopasowanie po tram_id / id lub z treści popup/tooltip (np. "Linia 52")
+    raw_id = str(props.get("tram_id") or props.get("id") or "")
+    if raw_id not in line_colors:
+        label = str(props.get("popup") or props.get("tooltip") or "")
+        raw_id = next((ln for ln in line_colors if f"Linia {ln}" in label), "")
+
+    tram_color = line_colors.get(raw_id, "#e6194b")
+    if "iconoptions" in props:
+        props["iconoptions"]["color"] = tram_color
+        props["iconoptions"]["fillColor"] = tram_color
 
 if not loaded_lines:
     st.error("Nie udało się zbudować żadnej trasy do animacji.")
