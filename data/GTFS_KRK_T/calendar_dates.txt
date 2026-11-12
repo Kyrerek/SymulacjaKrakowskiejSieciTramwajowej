@@ -1,4 +1,10 @@
 service_id,date,exception_type
+service_2,20261017,1
+service_3,20261018,1
+service_1,20261019,1
+service_1,20261020,1
+service_1,20261021,1
+service_5,20261022,1
 service_4,20261023,1
 service_2,20261024,1
 service_3,20261025,1
@@ -83,9 +89,3 @@ service_1,20270111,1
 service_1,20270112,1
 service_1,20270113,1
 service_5,20270114,1
-service_4,20270115,1
-service_2,20270116,1
-service_3,20270117,1
-service_1,20270118,1
-service_1,20270119,1
-service_1,20270120,1

@@ -9,3 +9,9 @@ matplotlib>=3.8.0
 plotly>=5.18.0
 scipy>=1.12.0
 scikit-learn>=1.4.0
+# Moduł osm_infrastructure.py: pobieranie z OpenStreetMap i cache Parquet
+osmnx>=1.9.4
+pyarrow>=14.0.0
+
+# Testy jednostkowe
+pytest>=8.0.0
