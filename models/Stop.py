@@ -12,6 +12,9 @@ class Stop(Point):
         self.id = id_
         self.name = name
         self.is_ocupied = False
+        self.is_occupied = False
+        self.occupant = None
+        self.lock = None
         self.enter_tram_num_ = enter_tram_num
 
 
@@ -21,3 +24,13 @@ class Stop(Point):
 
     def enter_tram_num(self,time_sec,tram: Tram):
         return self.enter_tram_num_(time_sec,tram)
+
+    def reserve(self, tram):
+        self.is_ocupied = True
+        self.is_occupied = True
+        self.occupant = tram
+
+    def release(self):
+        self.is_ocupied = False
+        self.is_occupied = False
+        self.occupant = None

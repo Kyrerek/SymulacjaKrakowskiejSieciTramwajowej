@@ -1,4 +1,3 @@
-
 from models.Point import Point
 from models.Stop import Stop
 from models.TramStatus import TramStatus
@@ -12,7 +11,7 @@ class Tram(Point):
         loop_route_num: int,
         name="",
         delay = lambda time,
-        p_num: 30
+        p_num: 1000
     ):
         super().__init__(route[0].lat,route[0].lon)
         self.id = id_
@@ -22,6 +21,7 @@ class Tram(Point):
         self.loop_route_num = loop_route_num
         self.status = TramStatus.SLEEP
         self.delay_ = delay
+        self.current_stop = None
 
 
     def check_start(self,time_sec):
