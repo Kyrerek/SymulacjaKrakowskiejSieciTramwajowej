@@ -1,5 +1,5 @@
 from datetime import timedelta, datetime
-from models import Tram, Stop, Point,StopRoad
+from models import Tram, Stop, Point,StopRoad, TramStatus
 import simpy
 import math
 
@@ -14,17 +14,32 @@ class TramMotion:
     def run_trams(self, trams: list[Tram]):
         max_time = (self.stop_time - self.start_time).total_seconds()
         for tram in trams:
-            self.env.process(self._run_tram(tram))
+            self.env.process(self._start_tram(tram))
         self.env.run(until=max_time)
         return self.features
 
-    def _run_tram(self, tram: Tram):
+    def _start_tram(self, tram: Tram):
+        wait_time = tram.start_time - self.env.now
+        if wait_time < 0:
+            tram.status = TramStatus.TERMINATED
+            return
+
+        if wait_time > 0:
+            yield self.env.timeout(wait_time)
+
+        tram.status = TramStatus.ARRIVAL
+        yield from self._run_tram(tram)
+
+        tram.status = TramStatus.TERMINATED
+
+    def _run_tram(self,tram: Tram):
         for i in range(tram.loop_route_num):
             for idx in range(len(tram.route)):
                 next_stop_idx = (idx + 1) % len(tram.route)
+                tram.status = TramStatus.ARRIVAL
                 yield from self._run_route_data(tram,self._generate_arrival_data(tram,idx,self.env.now))
+                tram.status =TramStatus.DWEL
                 yield from self._run_route_data(tram,self._generate_dwell_data(tram,tram.route[next_stop_idx],self.env.now))
-
 
     def _run_route_data(self, tram,route_data):
 

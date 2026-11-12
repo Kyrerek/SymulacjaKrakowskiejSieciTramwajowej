@@ -5,6 +5,7 @@ import folium
 from folium.plugins import TimestampedGeoJson
 import streamlit as st
 from streamlit_folium import st_folium
+import random
 
 from models import StopRoad, Tram
 from motion import TramMotion
@@ -74,11 +75,18 @@ for line_index, line in enumerate(lines):
         continue
 
     color = LINE_COLORS[line_index % len(LINE_COLORS)]
+    line_colors[str(line)] = color
+
+
+    random_start_sec = random.randint(0, 3600)
+    random_loops = random.randint(1, 3)
+
     tram = Tram(
         id_=line,
         route=cyclic_stops,
-        loop_route_num=1,
-        name=f"Linia {line}",
+        start_time=random_start_sec,
+        loop_route_num=random_loops,
+        name=f"Linia {line} (start +{random_start_sec // 60} min, {random_loops}x)",
     )
 
     trams.append(tram)
