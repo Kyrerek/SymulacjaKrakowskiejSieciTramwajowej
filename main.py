@@ -50,6 +50,7 @@ if not lines:
     st.stop()
 
 start_time = datetime(2026, 10, 27, 12, 0, 0)
+stop_time = datetime(2026, 10, 28, 12, 0, 0)
 features = []
 display_roads = []
 display_stops = []
@@ -85,7 +86,7 @@ for line_index, line in enumerate(lines):
     display_stops.extend(cyclic_stops)
     loaded_lines.append(line)
 
-features = TramMotion(start_time=start_time, target_time_step=10).run_trams(trams)
+features = TramMotion(start_time=start_time, stop_time=stop_time, target_time_step=10).run_trams(trams)
 
 for feature in features:
     props = feature.get("properties", {})
