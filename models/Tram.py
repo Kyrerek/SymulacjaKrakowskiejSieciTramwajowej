@@ -10,8 +10,7 @@ class Tram(Point):
         start_time: int,
         loop_route_num: int,
         name="",
-        delay = lambda time,
-        p_num: 30
+        delay = lambda time,stop: 50,
     ):
         super().__init__(route[0].lat,route[0].lon)
         self.id = id_
