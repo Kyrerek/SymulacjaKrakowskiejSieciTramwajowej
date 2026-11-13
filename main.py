@@ -131,6 +131,14 @@ skipped_lines = []
 trams = []
 line_colors = {}
 
+from trainers import StopRoadTrainer
+
+@st.cache_resource
+def load_trainer() -> StopRoadTrainer:
+    return StopRoadTrainer.load("data/trained_samplers.json")
+
+trainer = load_trainer()
+
 for line_index, line in enumerate(lines):
     directions = get_route_geometry(line)
     if not directions or len(directions) < 2:
@@ -141,6 +149,7 @@ for line_index, line in enumerate(lines):
         outbound = build_stop_roads(line, directions[0].direction_id)
         inbound = build_stop_roads(line, directions[1].direction_id)
         cyclic_stops = build_cyclic_route(outbound, inbound)
+        trainer.bind_to_route(cyclic_stops)
     except ValueError:
         skipped_lines.append(line)
         continue

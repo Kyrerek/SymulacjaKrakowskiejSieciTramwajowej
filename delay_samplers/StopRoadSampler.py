@@ -35,6 +35,8 @@ class StopRoadSampler:
 
 
     def predict(self,time):
+        day_time = 86400.0
+        time_of_day = time % day_time
         idx = 0
         for thresh in self.thresholds:
             if time < thresh:
