@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 import realtime_data as rt_proc
-from delay_samplers import StopRoadSampler
+from delay_samplers import StopRoadWeekSampler, StopRoadSampler
 from models import StopRoad
 
 
@@ -21,30 +21,66 @@ class StopRoadTrainer:
     def __init__(self, dist_num: int = 5, min_samples_per_segment: int = 5):
         self.dist_num = dist_num
         self.min_samples_per_segment = min_samples_per_segment
-        self.samplers: dict[tuple[str, str], StopRoadSampler] = {}
+        self.samplers: dict[tuple[str, str], StopRoadWeekSampler] = {}
         self.training_stats: dict = {}
 
     # --------------------------------------------------------- trening z danych
     def fit_from_observations(self, seg_df: pd.DataFrame, value_col: str = "travel_s") -> dict:
         """Trenuje samplery na podstawie tabeli z build_segment_observations()."""
-        grouped_data = rt_proc.sampler_data(seg_df, value=value_col)
+        
+        df = seg_df.copy()
+        if "valid" in df.columns:
+            df = df[df["valid"]]
+        df = df[df[value_col].notna() & (df[value_col] > 0) & (df[value_col] < 1800)]
+
+        # Wyznaczamy dzień tygodnia: 0 = poniedziałek .. 6 = niedziela
+        if "day" in df.columns:
+            df["week_day"] = pd.to_datetime(df["day"]).dt.dayofweek
+        else:
+            df["week_day"] = (
+                pd.to_datetime(df["departure_ts"], unit="s", utc=True)
+                .dt.tz_convert("Europe/Warsaw")
+                .dt.dayofweek
+            )
 
         trained_count = 0
         skipped_count = 0
 
-        for (stop_from, stop_to), samples in grouped_data.items():
+        for (stop_from, stop_to), seg_group in df.groupby(["stop_from","stop_to"]):
             # Normalizujemy czas doby do 0..86400s (kursy nocne w GTFS mają >86400s)
-            normalized_samples = [(float(t) % 86400.0, float(v)) for t, v in samples]
+            all_week_samples = [
+                (float(t) % 86400.0, float(v))
+                for t, v in zip(seg_group["tod_s"], seg_group[value_col])
+            ]
 
-            if len(normalized_samples) < self.min_samples_per_segment:
+            if len(all_week_samples) < self.min_samples_per_segment:
                 skipped_count += 1
                 continue
 
-            # Dopasowujemy liczbę liści drzewa, jeśli próbek jest mało
-            effective_buckets = min(self.dist_num, max(1, len(normalized_samples) // 3))
+            # Dzielimy próbki na 7 dni tygodnia (0..6)
+            by_day: dict[int, list[tuple[float, float]]] = {d: [] for d in range(7)}
+            for wd, sub in seg_group.groupby("week_day"):
+                by_day[int(wd)] = [
+                    (float(t) % 86400.0, float(v))
+                    for t, v in zip(sub["tod_s"], sub[value_col])
+                ]
 
-            sampler = StopRoadSampler()
-            sampler.fit(normalized_samples, dist_num=effective_buckets)
+            week_data: list[list[tuple[float, float]]] = []
+            dist_nums: list[int] = []
+
+            for d in range(7):
+                # Jeśli w dany dzień było za mało kursów, bierzemy próbki z całego tygodnia
+                day_samples = (
+                    by_day[d]
+                    if len(by_day[d]) >= self.min_samples_per_segment
+                    else all_week_samples
+                )
+                effective_buckets = min(self.dist_num, max(2, len(day_samples) // 3))
+                week_data.append(day_samples)
+                dist_nums.append(effective_buckets)
+
+            sampler = StopRoadWeekSampler()
+            sampler.fit(week_data, dist_nums=dist_nums)
             self.samplers[(str(stop_from), str(stop_to))] = sampler
             trained_count += 1
 
@@ -82,11 +118,14 @@ class StopRoadTrainer:
             "stats": self.training_stats,
             "segments": {
                 f"{s_from}->{s_to}": {
-                    "thresholds": sampler.thresholds,
-                    "dists": [list(d) for d in sampler.dists],
-                    "metrics": sampler.metrics,
+                    f"sampler_{day}": {
+                        "thresholds": sampler.thresholds,
+                        "dists": [list(d) for d in sampler.dists],
+                        "metrics": sampler.metrics
+                    } 
+                    for day,sampler in enumerate(week_sampler.samplers) 
                 }
-                for (s_from, s_to), sampler in self.samplers.items()
+                for (s_from, s_to), week_sampler in self.samplers.items()
             },
         }
         Path(path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -98,14 +137,18 @@ class StopRoadTrainer:
         trainer = cls(dist_num=payload.get("dist_num", 5))
         trainer.training_stats = payload.get("stats", {})
 
-        for key, data in payload.get("segments", {}).items():
+        for key, segment_data in payload.get("segments", {}).items():
             s_from, s_to = key.split("->", 1)
-            sampler = StopRoadSampler(
-                thresholds=data["thresholds"],
-                dists=[tuple(d) for d in data["dists"]],
-            )
-            sampler.metrics = data.get("metrics", {})
-            trainer.samplers[(s_from, s_to)] = sampler
+            sorted_days = sorted(segment_data.items(), key=lambda kv: int(kv[0].split("_")[1]))
+            samplers = []
+            for _, data in sorted_days:
+                sampler = StopRoadSampler(
+                    thresholds=data["thresholds"],
+                    dists=[tuple(d) for d in data["dists"]],
+                )
+                sampler.metrics = data.get("metrics", {})
+                samplers.append(sampler)
+            trainer.samplers[(s_from, s_to)] = StopRoadWeekSampler(samplers)
 
         return trainer
 
@@ -114,7 +157,7 @@ class StopRoadTrainer:
         key = (str(road.start.id), str(road.end.id))
         sampler = self.samplers.get(key)
         if sampler is None:
-            return lambda time_sec: 60.0
+            return lambda time: 60.0
         return sampler.predict
 
     def bind_to_route(self, stops: list) -> None:

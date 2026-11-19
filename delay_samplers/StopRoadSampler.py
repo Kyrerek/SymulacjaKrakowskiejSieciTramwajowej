@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.metrics import r2_score
 from scipy import stats
+from datetime import datetime
 
 class StopRoadSampler:
     """
@@ -34,12 +35,11 @@ class StopRoadSampler:
         return self.metrics
 
 
-    def predict(self,time):
-        day_time = 86400.0
-        time_of_day = time % day_time
+    def predict(self,time:datetime):
+        loc_time = time.hour * 3600 + time.minute * 60 + time.second
         idx = 0
         for thresh in self.thresholds:
-            if time < thresh:
+            if loc_time < thresh:
                 break
             idx += 1
         

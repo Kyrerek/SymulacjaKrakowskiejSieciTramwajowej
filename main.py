@@ -158,15 +158,15 @@ for line_index, line in enumerate(lines):
     line_colors[str(line)] = color
 
 
-    random_start_sec = random.randint(0, min(3600, sim_duration_sec))
+    random_start = start_time + timedelta(seconds=random.randint(0, min(3600, sim_duration_sec)))
     random_loops = random.randint(1, 3)
 
     tram = Tram(
         id_=line,
         route=cyclic_stops,
-        start_time=random_start_sec,
+        start_time=random_start,
         loop_route_num=random_loops,
-        name=f"Linia {line} (start +{random_start_sec // 60} min, {random_loops}x)",
+        name=f"Linia {line} (start +{random_start}, {random_loops}x)",
     )
 
     trams.append(tram)

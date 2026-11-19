@@ -56,7 +56,7 @@ class TramMotion:
     # -------------------------------------------------------------------------
 
     def _start_tram(self, tram: Tram):
-        wait_time = tram.start_time - self.env.now
+        wait_time = (tram.start_time - self.current_time).total_seconds()
         if wait_time < 0:
             tram.status = TramStatus.TERMINATED
             return
@@ -99,7 +99,7 @@ class TramMotion:
                 road = next((r for r in current_stop.roads if r.end.id == next_stop.id), None)
 
                 stop_lock = self._ensure_stop_lock(next_stop)
-                total_travel = road.arrival_delay(self.env.now) if road else 30.0
+                total_travel = road.arrival_delay(self.current_time) if road else 30.0
                 cum = self._cumulative_distances(road.points) if road and len(road.points) >= 2 else [0.0]
                 total_length = cum[-1]
 
@@ -149,7 +149,7 @@ class TramMotion:
 
                 # STAN 5: Postój na przystanku
                 self._hold_at(tram, next_stop, TramStatus.DWEL)
-                yield self.env.timeout(tram.dwell_delay(self.env.now, next_stop))
+                yield self.env.timeout(tram.dwell_delay(self.current_time, next_stop))
 
                 # STAN 6: Odjazd i zwolnienie peronu
                 next_stop.release()
@@ -228,3 +228,7 @@ class TramMotion:
                 "popup": f"<b>{tram.name}</b><br>Status: {tram.status.name}<br>Czas: {t.strftime('%H:%M:%S')}",
             },
         })
+
+    @property
+    def current_time(self) -> datetime:
+        return self.start_time + timedelta(seconds=self.env.now)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 from .Point import Point
+from datetime import datetime
 
 if TYPE_CHECKING:
     from .StopRoad import StopRoad
@@ -22,8 +23,8 @@ class Stop(Point):
         self.roads = roads
 
 
-    def enter_tram_num(self,time_sec,tram: Tram):
-        return self.enter_tram_num_(time_sec,tram)
+    def enter_tram_num(self,time: datetime,tram: Tram):
+        return self.enter_tram_num_(time,tram)
 
     def reserve(self, tram):
         self.is_ocupied = True

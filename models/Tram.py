@@ -1,3 +1,4 @@
+from datetime import datetime
 from models.Point import Point
 from models.Stop import Stop
 from models.TramStatus import TramStatus
@@ -7,10 +8,10 @@ class Tram(Point):
         self,
         id_,
         route: list[Stop],
-        start_time: int,
+        start_time: datetime,
         loop_route_num: int,
         name="",
-        delay = lambda time,stop: 50,
+        delay = lambda time,stop: 1000,
     ):
         super().__init__(route[0].lat,route[0].lon)
         self.id = id_
@@ -23,10 +24,10 @@ class Tram(Point):
         self.current_stop = None
 
 
-    def check_start(self,time_sec):
-        if self.start_time > time_sec and self.status == TramStatus.SLEEP:
+    def check_start(self,time: datetime):
+        if self.start_time > time and self.status == TramStatus.SLEEP:
             self.status = TramStatus.ARRIVAL
 
 
-    def dwell_delay(self,time_sec,stop: Stop):
-        return self.delay_(time_sec,stop.enter_tram_num(time_sec,self))
+    def dwell_delay(self,time: datetime,stop: Stop):
+        return self.delay_(time,stop.enter_tram_num(time,self))
