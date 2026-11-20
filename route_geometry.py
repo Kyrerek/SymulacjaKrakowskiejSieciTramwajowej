@@ -7,6 +7,7 @@ przekazywaniu do GeoJSON/Folium należy odwrócić kolejność na ``[lon, lat]``
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -268,11 +269,26 @@ def get_route_geometry(
     data_dir: Path = tram_data.DATA_DIR,
 ) -> RouteGeometry | list[RouteGeometry] | None:
     """Pobiera geometrię jednej linii; bez kierunku zwraca oba kierunki."""
-    geometries = get_route_geometries([tram_number], dates, data_dir)
+    dates_key = None if dates is None else tuple(str(date) for date in dates)
+    geometries = _get_route_geometries_cached(
+        (str(tram_number),),
+        dates_key,
+        str(data_dir),
+    )
     if direction_id is None:
-        return geometries
+        return list(geometries)
     wanted = str(direction_id)
     return next((g for g in geometries if g.direction_id == wanted), None)
+
+
+@lru_cache(maxsize=128)
+def _get_route_geometries_cached(
+    trams: tuple[str, ...],
+    dates: tuple[str, ...] | None,
+    data_dir: str,
+) -> tuple[RouteGeometry, ...]:
+    geometries = get_route_geometries(list(trams), list(dates) if dates else None, Path(data_dir))
+    return tuple(geometries)
 
 
 def get_available_lines(data_dir: Path = tram_data.DATA_DIR) -> list[str]:
@@ -291,3 +307,21 @@ def map_center(geometries: list[RouteGeometry]) -> tuple[float, float]:
         raise ValueError("Nie można wyznaczyć środka: brak geometrii tras")
     return ((min(p.lat for p in points) + max(p.lat for p in points)) / 2,
             (min(p.lon for p in points) + max(p.lon for p in points)) / 2)
+
+
+def build_cyclic_route(outbound: RouteRoadNetwork, inbound: RouteRoadNetwork) -> list[Stop]:
+    """Łączy kierunki tam i z powrotem w cykl wymagany przez motion.py."""
+    if len(inbound.stops) < 2 or not inbound.roads:
+        raise ValueError("Brak pełnej trasy powrotnej")
+
+    stops = outbound.stops + inbound.stops[1:-1]
+    first_return = inbound.roads[0]
+    return_target = inbound.stops[1] if len(inbound.stops) > 2 else outbound.stops[0]
+    outbound.stops[-1].roads.append(
+        StopRoad(outbound.stops[-1], return_target, first_return.points)
+    )
+
+    if len(inbound.stops) > 2:
+        last_return = inbound.roads[-1]
+        stops[-1].roads.append(StopRoad(stops[-1], outbound.stops[0], last_return.points))
+    return stops
