@@ -1,8 +1,14 @@
+from __future__ import annotations
 from datetime import datetime
+from typing import TYPE_CHECKING
 from models.Point import Point
 from models.Stop import Stop
 from models.StopRoad import StopRoad
 from models.TramStatus import TramStatus
+
+if TYPE_CHECKING:
+    from fleet import TramType
+    from passengers import PassengerSystem
 
 
 class Tram(Point):
@@ -14,6 +20,8 @@ class Tram(Point):
         loop_route_num: int,
         name: str = "",
         delay=lambda time, stop: 1000,
+        tram_type: TramType | None = None,
+        passengers: PassengerSystem | None = None,
     ):
         super().__init__(route[0].lat, route[0].lon)
         self.id = id_
@@ -25,6 +33,13 @@ class Tram(Point):
         self.delay_ = delay
         self.current_stop: Stop | None = None
 
+        # Pasażerowie i tabor
+        self.tram_type = tram_type
+        self.passengers = passengers
+        self.load: int = 0
+        self.onboard: dict[str, int] = {}     # cel podróży (stop_id) -> liczba osób w pojeździe
+        self.route_pos: int = 0               # indeks aktualnego przystanku w route
+
         # Wewnętrzny stan kinematyki dla samplera
         self._is_moving: bool = False
         self._active_road: StopRoad | None = None
@@ -33,7 +48,31 @@ class Tram(Point):
         self._t0: float = 0.0
         self._t1: float = 0.0
 
+    @property
+    def capacity(self) -> int:
+        if self.tram_type is not None:
+            return self.tram_type.capacity
+        return self.passengers.params.default_capacity if self.passengers else 0
+
+    @property
+    def doors(self) -> int:
+        if self.tram_type is not None:
+            return self.tram_type.doors
+        return self.passengers.params.default_doors if self.passengers else 1
+
+    @property
+    def fullness(self) -> float:
+        cap = self.capacity
+        return self.load / cap if cap else 0.0
+
+    def downstream_ids(self, horizon: int) -> set[str]:
+        """Identyfikatory przystanków, które tramwaj odwiedzi w najbliższych `horizon` krokach."""
+        n = len(self.route)
+        return {str(self.route[(self.route_pos + k) % n].id) for k in range(1, min(horizon, n - 1) + 1)}
+
     def dwell_delay(self, time: datetime, stop: Stop) -> float:
+        if self.passengers is not None:
+            return self.passengers.exchange(time, self, stop).dwell_s
         return self.delay_(time, stop.enter_tram_num(time, self))
 
     def set_static(self, point: Point, status: TramStatus):

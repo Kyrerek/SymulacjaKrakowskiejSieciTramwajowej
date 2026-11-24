@@ -16,6 +16,9 @@ class SimulationSample:
     timestamp: datetime
     lat: float
     lon: float
+    load: int = 0
+    capacity: int = 0
+    fullness: float = 0.0
 
 
 class TramMotion:
@@ -132,6 +135,7 @@ class TramMotion:
                 block.release(block_req)
                 next_stop.reserve(tram)
                 tram.current_stop = next_stop
+                tram.route_pos = (idx + 1) % len(tram.route)
 
                 if road:
                     yield from self._drive_segment(tram, road, current_dist, road.total_length, total_travel)
@@ -161,6 +165,9 @@ class TramMotion:
                         timestamp=ts,
                         lat=pt.lat,
                         lon=pt.lon,
+                        load=tram.load,
+                        capacity=tram.capacity,
+                        fullness=tram.fullness,
                     )
                 )
             yield self.env.timeout(self.target_time_step)
