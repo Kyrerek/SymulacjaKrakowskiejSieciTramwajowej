@@ -1,0 +1,311 @@
+{
+    "souces": [
+        {
+            "url":"https://odjazdowykrakow.pl/pojazdy",
+            "date":"23-11-2026"
+        }, 
+        {
+            "url":"https://mpk.krakow.pl/tramwaje?Article_page=2",
+            "date":"23-11-2026"
+        }
+    ],
+    "groups": [
+      {
+        "prefix": "HW",
+        "id_min": 101,
+        "id_max": 124,
+        "model": "SGP/Lohner E1",
+        "length_m": 19.711,
+        "doors": 4,
+        "capacity": 151,
+        "seats": 33,
+        "low_floor": false
+      },
+      {
+        "prefix": "HW",
+        "id_min": 126,
+        "id_max": 126,
+        "model": "SGP/Lohner E1+c3",
+        "length_m": 33.811,
+        "doors": 8,
+        "capacity": 289,
+        "seats": 61,
+        "low_floor": false
+      },
+      {
+        "prefix": "HW",
+        "id_min": 129,
+        "id_max": 129,
+        "model": "SGP/Lohner E1",
+        "length_m": 19.711,
+        "doors": 4,
+        "capacity": 151,
+        "seats": 33,
+        "low_floor": false
+      },
+      {
+        "prefix": "HW",
+        "id_min": 130,
+        "id_max": 132,
+        "model": "SGP/Lohner E1+c3",
+        "length_m": 33.811,
+        "doors": 8,
+        "capacity": 289,
+        "seats": 61,
+        "low_floor": false
+      },
+      {
+        "prefix": "HW",
+        "id_min": 142,
+        "id_max": 142,
+        "model": "SGP/Lohner E1",
+        "length_m": 19.711,
+        "doors": 4,
+        "capacity": 151,
+        "seats": 33,
+        "low_floor": false
+      },
+      {
+        "prefix": "HW",
+        "id_min": 143,
+        "id_max": 149,
+        "model": "SGP/Lohner E1+c3",
+        "length_m": 33.811,
+        "doors": 8,
+        "capacity": 289,
+        "seats": 61,
+        "low_floor": false
+      },
+      {
+        "prefix": "HW",
+        "id_min": 151,
+        "id_max": 155,
+        "model": "SGP/Lohner E1",
+        "length_m": 19.711,
+        "doors": 4,
+        "capacity": 151,
+        "seats": 33,
+        "low_floor": false
+      },
+      {
+        "prefix": "HW",
+        "id_min": 164,
+        "id_max": 164,
+        "model": "SGP/Lohner E1+c3",
+        "length_m": 33.811,
+        "doors": 8,
+        "capacity": 289,
+        "seats": 61,
+        "low_floor": false
+      },
+      {
+        "prefix": "RZ",
+        "id_min": 213,
+        "id_max": 239,
+        "model": "Konstal 105Na+105Na+105Na",
+        "length_m": 40.5,
+        "doors": 12,
+        "capacity": 375,
+        "seats": 69,
+        "low_floor": false
+      },
+      {
+        "prefix": "RZ",
+        "id_min": 242,
+        "id_max": 247,
+        "model": "Konstal 105Na+105Na",
+        "length_m": 27,
+        "doors": 8,
+        "capacity": 250,
+        "seats": 46,
+        "low_floor": false
+      },
+      {
+        "prefix": "RZ",
+        "id_min": 255,
+        "id_max": 257,
+        "model": "Konstal 105Na+105Na+105Na",
+        "length_m": 40.5,
+        "doors": 12,
+        "capacity": 375,
+        "seats": 69,
+        "low_floor": false
+      },
+      {
+        "prefix": "RZ",
+        "id_min": 260,
+        "id_max": 273,
+        "model": "Konstal 105Na+105Na",
+        "length_m": 27,
+        "doors": 8,
+        "capacity": 250,
+        "seats": 46,
+        "low_floor": false
+      },
+      {
+        "prefix": "RZ",
+        "id_min": 278,
+        "id_max": 280,
+        "model": "Konstal 105Na+105Na+105Na",
+        "length_m": 40.5,
+        "doors": 12,
+        "capacity": 375,
+        "seats": 69,
+        "low_floor": false
+      },
+      {
+        "prefix": "RF",
+        "id_min": 301,
+        "id_max": 334,
+        "model": "Düwag GT8N",
+        "length_m": 26.2,
+        "doors": 4,
+        "capacity": 200,
+        "seats": 51,
+        "low_floor": true
+      },
+      {
+        "prefix": "HL",
+        "id_min": 401,
+        "id_max": 440,
+        "model": "Bombardier-Rotax/MPK EU8N",
+        "length_m": 26.615,
+        "doors": 5,
+        "capacity": 206,
+        "seats": 48,
+        "low_floor": true
+      },
+      {
+        "prefix": "HK",
+        "id_min": 451,
+        "id_max": 462,
+        "model": "Düwag N8C-NF/MAN N8S-NF",
+        "length_m": 26.08,
+        "doors": 5,
+        "capacity": 207,
+        "seats": 46,
+        "low_floor": true
+      },
+      {
+        "prefix": "RP",
+        "id_min": 601,
+        "id_max": 614,
+        "model": "Bombardier NGT6",
+        "length_m": 26.0,
+        "doors": 4,
+        "capacity": 182,
+        "seats": 76,
+        "low_floor": true
+      },
+      {
+        "prefix": "RP",
+        "id_min": 615,
+        "id_max": 650,
+        "model": "Bombardier NGT6/2",
+        "length_m": 26.0,
+        "doors": 5,
+        "capacity": 184,
+        "seats": 73,
+        "low_floor": true
+      },
+      {
+        "prefix": "HY",
+        "id_min": 701,
+        "id_max": 745,
+        "model": "Stadler Tango „Lajkonik II”",
+        "length_m": 33.4,
+        "doors": 7,
+        "capacity": 273,
+        "seats": 75,
+        "low_floor": true
+      },
+      {
+        "prefix": "RY",
+        "id_min": 801,
+        "id_max": 824,
+        "model": "Bombardier NGT8",
+        "length_m": 32.83,
+        "doors": 7,
+        "capacity": 225,
+        "seats": 77,
+        "low_floor": true
+      },
+      {
+        "prefix": "RY",
+        "id_min": 825,
+        "id_max": 839,
+        "model": "Stadler Tango Kraków „Lajkonik”",
+        "length_m": 33.4,
+        "doors": 7,
+        "capacity": 253,
+        "seats": 82,
+        "low_floor": true
+      },
+      {
+        "prefix": "HY",
+        "id_min": 840,
+        "id_max": 874,
+        "model": "Stadler Tango Kraków „Lajkonik”",
+        "length_m": 33.4,
+        "doors": 7,
+        "capacity": 253,
+        "seats": 82,
+        "low_floor": true
+      },
+      {
+        "prefix": "RY",
+        "id_min": 875,
+        "id_max": 889,
+        "model": "Stadler Tango „Lajkonik II”",
+        "length_m": 33.4,
+        "doors": 7,
+        "capacity": 273,
+        "seats": 75,
+        "low_floor": true
+      },
+      {
+        "prefix": "RY",
+        "id_min": 899,
+        "id_max": 899,
+        "model": "Newag Nevelo 126N",
+        "length_m": 31.62,
+        "doors": 7,
+        "capacity": 239,
+        "seats": 64,
+        "low_floor": true
+      },
+      {
+        "prefix": "RG",
+        "id_min": 901,
+        "id_max": 914,
+        "model": "PESA 2014N „Krakowiak”",
+        "length_m": 42.83,
+        "doors": 8,
+        "capacity": 322,
+        "seats": 93,
+        "low_floor": true
+      },
+      {
+        "prefix": "HG",
+        "id_min": 915,
+        "id_max": 936,
+        "model": "PESA 2014N „Krakowiak”",
+        "length_m": 42.83,
+        "doors": 8,
+        "capacity": 322,
+        "seats": 93,
+        "low_floor": true
+      },
+      {
+        "prefix": "HG",
+        "id_min": 999,
+        "id_max": 999,
+        "model": "Konstal/Protram 405N-Kr",
+        "length_m": 40.57,
+        "doors": 7,
+        "capacity": 297,
+        "seats": 57,
+        "low_floor": true
+      }
+    ]
+  }
