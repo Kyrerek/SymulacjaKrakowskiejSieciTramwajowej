@@ -38,3 +38,9 @@ pip install -r requirements.txt
 ```bash
 streamlit run main.py
 ```
+
+## Ładowanie wag przystanków
+Moze to zająć chwile, ale same wagi są w `data/stop_weights.json`
+```bash
+uv run stop_weights.py --gus data/gus/GRID_NSP2021_RES.shp --buildings --pop-col RES
+```

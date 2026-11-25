@@ -9,8 +9,11 @@ Model zagregowany, bez procesów SimPy dla pojedynczych osób:
   * wsiadają tylko ci, których cel leży na dalszej trasie tego tramwaju, w kolejności
     przybycia, do wyczerpania pojemności - reszta czeka na następny tramwaj.
 
-WSZYSTKIE LICZBY W PassengerParams I DOMYŚLNE PROFILE SĄ PRZYBLIŻENIAMI do podmiany na
-dane (GUS/OSM, własne pomiary, dane ZTP): w danych realtime nie ma napełnienia.
+WSZYSTKIE LICZBY W PassengerParams I DOMYŚLNE PROFILE SĄ PRZYBLIŻENIAMI: w danych
+realtime nie ma napełnienia, a danych pasażerskich ZTP nie będzie. Rozkład przestrzenny
+popytu pochodzi z GUS/OSM (stop_weights.py), a skala (base_rate_per_hour, demand_scale)
+i szybkości wsiadania są parametrami niepewnymi - dlatego wyniki podajemy jako analizę
+wrażliwości na te parametry, a nie jako skalibrowane przewidywanie.
 """
 from __future__ import annotations
 
@@ -63,6 +66,9 @@ class PassengerParams:
     default_doors: int = 5
 
 
+DEFAULT_WEIGHTS_PATH = Path("data/stop_weights.json")   # tworzy go stop_weights.py
+
+
 class StopWeights:
     """Waga atrakcyjności przystanku (1.0 = przeciętny). Klucz: stop_id albo nazwa."""
 
@@ -73,6 +79,11 @@ class StopWeights:
     @classmethod
     def from_json(cls, path: str | Path, default: float = 1.0) -> "StopWeights":
         return cls(json.loads(Path(path).read_text(encoding="utf-8")), default)
+
+    @classmethod
+    def from_default(cls, path: str | Path = DEFAULT_WEIGHTS_PATH) -> "StopWeights":
+        """Wagi z data/stop_weights.json, a gdy pliku nie ma - wszystkie równe 1."""
+        return cls.from_json(path) if Path(path).exists() else cls()
 
     def weight(self, stop: "Stop") -> float:
         return float(self.weights.get(str(stop.id), self.weights.get(stop.name, self.default)))
@@ -117,7 +128,7 @@ class PassengerSystem:
     def __init__(self, params: PassengerParams | None = None, weights: StopWeights | None = None,
                  seed: int | None = 0):
         self.params = params or PassengerParams()
-        self.weights = weights or StopWeights()
+        self.weights = weights if weights is not None else StopWeights.from_default()
         self.rng = np.random.default_rng(seed)
         self.exchanges: list[StopExchange] = []
         self._states: dict[str, _StopState] = {}
