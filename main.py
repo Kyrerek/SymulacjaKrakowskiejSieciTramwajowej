@@ -20,6 +20,7 @@ from route_geometry import (
     get_route_geometry,
 )
 from schedule import build_schedule_network
+from sidebar import render_sidebar, render_sidebar_export
 from tram_animation import TramAnimation, samples_to_tracks
 from trainers import StopRoadTrainer
 
@@ -157,57 +158,23 @@ def run_cached_simulation(
 feed_min, feed_max = feed_date_range()
 default_day = min(max(date(2026, 10, 27), feed_min), feed_max)
 
-with st.sidebar:
-    st.header("Czas symulacji")
-    period_mode = st.radio("Zakres", ["Jeden dzień", "Okres"], horizontal=True)
-    if period_mode == "Jeden dzień":
-        sim_day = st.date_input(
-            "Data", value=default_day, min_value=feed_min, max_value=feed_max, format="DD.MM.YYYY"
-        )
-        col_from, col_to = st.columns(2)
-        with col_from:
-            from_time = st.time_input("Od", value=time(12, 0), step=timedelta(minutes=15))
-        with col_to:
-            to_time = st.time_input("Do", value=time(14, 0), step=timedelta(minutes=15))
-        start_time = datetime.combine(sim_day, from_time)
-        stop_time = datetime.combine(sim_day, to_time)
-    else:
-        date_range = st.date_input(
-            "Daty",
-            value=(default_day, min(default_day + timedelta(days=1), feed_max)),
-            min_value=feed_min,
-            max_value=feed_max,
-            format="DD.MM.YYYY",
-        )
-        if not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
-            st.info("Wybierz datę początkową i końcową.")
-            st.stop()
-        start_day, end_day = date_range
-        col_from, col_to = st.columns(2)
-        with col_from:
-            from_time = st.time_input("Godzina startu", value=time(12, 0), step=timedelta(minutes=15))
-        with col_to:
-            to_time = st.time_input("Godzina końca", value=time(12, 0), step=timedelta(minutes=15))
-        start_time = datetime.combine(start_day, from_time)
-        stop_time = datetime.combine(end_day, to_time)
+cfg = render_sidebar(feed_min, feed_max, default_day)
+start_time = cfg.start_time
+stop_time = cfg.stop_time
 
-    st.header("Widok mapy")
-    show_stops = st.checkbox("Pokaż przystanki", value=False)
+if cfg.loaded_sim is not None:
+    lines = [str(line) for line in cfg.loaded_sim["simulated_lines"]]
+else:
+    sim_days = tuple(
+        pd.Timestamp(start_time.date() + timedelta(days=i))
+        for i in range((stop_time.date() - start_time.date()).days + 1)
+    )
+    active_lines = lines_active_in(sim_days)
 
-if stop_time <= start_time:
-    st.error("Koniec symulacji musi być późniejszy niż początek.")
-    st.stop()
-
-sim_days = tuple(
-    pd.Timestamp(start_time.date() + timedelta(days=i))
-    for i in range((stop_time.date() - start_time.date()).days + 1)
-)
-active_lines = lines_active_in(sim_days)
-
-lines = [line for line in get_available_lines_cached() if str(line) in active_lines]
-if not lines:
-    st.error("Brak kursujących linii w wybranym okresie.")
-    st.stop()
+    lines = [line for line in get_available_lines_cached() if str(line) in active_lines]
+    if not lines:
+        st.error("Brak kursujących linii w wybranym okresie.")
+        st.stop()
 
 route_networks, route_skipped = build_route_networks_cached(tuple(lines))
 
@@ -217,6 +184,9 @@ loaded_lines = []
 line_colors = {}
 
 for line_index, line in enumerate(lines):
+    color = LINE_COLORS[line_index % len(LINE_COLORS)]
+    line_colors[str(line)] = color
+
     route = route_networks.get(str(line))
     if route is None:
         continue
@@ -224,30 +194,37 @@ for line_index, line in enumerate(lines):
     outbound = route["outbound"]
     inbound = route["inbound"]
     cyclic_stops = route["stops"]
-    color = LINE_COLORS[line_index % len(LINE_COLORS)]
-    line_colors[str(line)] = color
 
     display_roads.extend((road, line, color) for road in outbound.roads + inbound.roads)
     display_stops.extend(cyclic_stops)
     loaded_lines.append(line)
 
-if not loaded_lines:
-    st.error("Nie udało się zbudować żadnej trasy do animacji.")
-    st.stop()
+if cfg.loaded_sim is not None:
+    tracks = cfg.loaded_sim["tracks"]
+    simulated_lines = tuple(cfg.loaded_sim["simulated_lines"])
+    sim_stats = cfg.loaded_sim["stats"]
+    skipped_lines = list(cfg.loaded_sim.get("skipped_lines", []))
+else:
+    if not loaded_lines:
+        st.error("Nie udało się zbudować żadnej trasy do animacji.")
+        st.stop()
 
-tracks, simulated_lines, sim_stats = run_cached_simulation(
-    start_time.isoformat(),
-    stop_time.isoformat(),
-    tuple(str(line) for line in lines),
-    5,
-)
-skipped_lines = list(route_skipped)
+    tracks, simulated_lines, sim_stats = run_cached_simulation(
+        start_time.isoformat(),
+        stop_time.isoformat(),
+        tuple(str(line) for line in lines),
+        5,
+    )
+    skipped_lines = list(route_skipped)
 
-all_points = [point for road, _, _ in display_roads for point in road.points]
-min_lat = min(point.lat for point in all_points)
-max_lat = max(point.lat for point in all_points)
-min_lon = min(point.lon for point in all_points)
-max_lon = max(point.lon for point in all_points)
+all_coords = [(point.lat, point.lon) for road, _, _ in display_roads for point in road.points]
+if not all_coords:
+    all_coords = [(lat, lon) for tr in tracks for lat, lon in zip(tr["c"][0::2], tr["c"][1::2])]
+
+min_lat = min(lat for lat, _ in all_coords)
+max_lat = max(lat for lat, _ in all_coords)
+min_lon = min(lon for _, lon in all_coords)
+max_lon = max(lon for _, lon in all_coords)
 m = folium.Map(location=[(min_lat + max_lat) / 2, (min_lon + max_lon) / 2], control_scale=True)
 m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
 
@@ -260,7 +237,7 @@ for road, line, color in display_roads:
         tooltip=f"Linia {line}",
     ).add_to(m)
 
-if show_stops:
+if cfg.show_stops:
     seen_stop_ids = set()
     for stop in display_stops:
         if stop.id in seen_stop_ids:
@@ -294,3 +271,13 @@ if skipped_lines:
     st.warning("Pominięte linie bez kompletnej trasy w obu kierunkach: " + ", ".join(skipped_lines))
 
 st_folium(m, width="100%", height=700, returned_objects=[])
+
+if cfg.loaded_sim is None:
+    render_sidebar_export(
+        start_time=start_time,
+        stop_time=stop_time,
+        simulated_lines=simulated_lines,
+        skipped_lines=skipped_lines,
+        sim_stats=sim_stats,
+        tracks=tracks,
+    )
