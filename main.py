@@ -49,6 +49,10 @@ LINE_COLORS = [
     "#800000", "#aaffc3", "#808000", "#ffd8b1", "#000075", "#a9a9a9",
 ]
 
+# Linie zawieszone na czas remontu (widoczne na mapie na szaro, wyłączone z symulacji)
+SUSPENDED_LINES = {"4", "8", "24"}
+SUSPENDED_LINE_COLOR = "#4b5563"
+
 
 # Górny limit liczby próbek do statystyk i wykresów - powyżej krok czasowy jest zwiększany.
 # Animacja nie korzysta z próbek (odtwarza dziennik ruchu tramwajów), więc krok jej nie psuje.
@@ -430,7 +434,13 @@ start_time = cfg.start_time
 stop_time = cfg.stop_time
 
 if cfg.loaded_sim is not None:
-    lines = [str(line) for line in cfg.loaded_sim["simulated_lines"]]
+    sim_lines_set = {str(line) for line in cfg.loaded_sim["simulated_lines"]}
+    available_set = set(get_available_lines_cached())
+    suspended_lines = [
+        line for line in sorted(SUSPENDED_LINES, key=line_sort_key)
+        if line not in sim_lines_set and line in available_set
+    ]
+    lines = [str(line) for line in cfg.loaded_sim["simulated_lines"]] + suspended_lines
 else:
     sim_days = tuple(
         pd.Timestamp(start_time.date() + timedelta(days=i))
@@ -439,22 +449,37 @@ else:
     active_lines = lines_active_in(sim_days)
 
     lines = [line for line in get_available_lines_cached() if str(line) in active_lines]
+    suspended_lines = [line for line in lines if str(line) in SUSPENDED_LINES]
     if not lines:
         st.error("Brak kursujących linii w wybranym okresie.")
         st.stop()
 
+suspended_set = set(suspended_lines)
+active_sim_lines = [line for line in lines if str(line) not in suspended_set]
 route_networks, route_skipped = build_route_networks_cached(tuple(lines))
 
 display_roads = []
+suspended_roads = []
 display_stops = []
 loaded_lines = []
 line_colors = {}
 
-for line_index, line in enumerate(lines):
-    color = LINE_COLORS[line_index % len(LINE_COLORS)]
+active_color_idx = 0
+for line in lines:
+    route = route_networks.get(str(line))
+    if str(line) in suspended_set:
+        line_colors[str(line)] = SUSPENDED_LINE_COLOR
+        if route is not None:
+            suspended_roads.extend(
+                (road, line, SUSPENDED_LINE_COLOR)
+                for road in route["outbound"].roads + route["inbound"].roads
+            )
+        continue
+
+    color = LINE_COLORS[active_color_idx % len(LINE_COLORS)]
+    active_color_idx += 1
     line_colors[str(line)] = color
 
-    route = route_networks.get(str(line))
     if route is None:
         continue
 
@@ -483,15 +508,19 @@ else:
     tracks, simulated_lines, sim_stats, metrics, delay_records, td_data = run_cached_simulation(
         start_time.isoformat(),
         stop_time.isoformat(),
-        tuple(str(line) for line in lines),
+        tuple(str(line) for line in active_sim_lines),
         5,
         cfg.passengers_on,
         cfg.demand_scale,
     )
-    skipped_lines = list(route_skipped)
+    skipped_lines = [l for l in route_skipped if str(l) not in suspended_set]
 delay_df = pd.DataFrame(delay_records)
 
-all_coords = [(point.lat, point.lon) for road, _, _ in display_roads for point in road.points]
+all_coords = [
+    (point.lat, point.lon)
+    for road, _, _ in (suspended_roads + display_roads)
+    for point in road.points
+]
 if not all_coords:
     all_coords = animation_points(tracks)
 
@@ -501,6 +530,15 @@ min_lon = min(lon for _, lon in all_coords)
 max_lon = max(lon for _, lon in all_coords)
 m = folium.Map(location=[(min_lat + max_lat) / 2, (min_lon + max_lon) / 2], control_scale=True)
 m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
+
+for road, line, color in suspended_roads:
+    folium.PolyLine(
+        locations=[(point.lat, point.lon) for point in road.points],
+        color=color,
+        weight=5,
+        opacity=0.85,
+        tooltip=f"Linia {line} (wyłączona – remont)",
+    ).add_to(m)
 
 for road, line, color in display_roads:
     folium.PolyLine(
@@ -535,12 +573,19 @@ TramAnimation(
     with_fullness=bool(sim_stats.get("passengers")),
 ).add_to(m)
 
+suspended_labels = sorted(SUSPENDED_LINES, key=line_sort_key)
+suspended_note = (
+    f" · zawieszone z powodu remontu (poza symulacją): {', '.join(suspended_labels)}"
+    if suspended_labels
+    else ""
+)
 st.caption(
     f"{start_time:%d.%m.%Y %H:%M} – {stop_time:%d.%m.%Y %H:%M} · "
     f"{len(simulated_lines)} linii · {sim_stats['trams']} tramwajów (bloków) · "
     f"krok próbek do statystyk {sim_stats['time_step']} s · "
     f"czasy przejazdu: {sim_stats['roads_from_sampler']} odcinków z danych realtime, "
     f"{sim_stats['roads_from_schedule']} z rozkładu"
+    f"{suspended_note}"
 )
 if metrics:
     render_metrics(metrics)
