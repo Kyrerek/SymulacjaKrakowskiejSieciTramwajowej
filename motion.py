@@ -316,6 +316,7 @@ class TramMotion:
                 "headsign": trip.headsign,
                 "end_delay_s": tram.delay_s,
                 "max_delay_s": max_delay,
+                "end_time": self.current_time,
             })
             tram.trip_seg = len(trip.stops) - 1
             next_trip = tram.schedule[trip_index + 1] if trip_index + 1 < len(tram.schedule) else None

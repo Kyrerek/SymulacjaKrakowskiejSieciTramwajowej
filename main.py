@@ -17,7 +17,9 @@ from analytics import (
     PUNCTUAL_EARLY_S,
     PUNCTUAL_LATE_S,
     compute_metrics,
+    daily_metrics,
     delay_by_line,
+    hourly_profile,
     time_distance_data,
 )
 from fleet import Fleet
@@ -181,6 +183,8 @@ def run_cached_simulation(
         "passengers": passengers_on,
     }
     metrics = compute_metrics(samples, trams, time_step, system.summary() if system else None)
+    metrics["daily"] = daily_metrics(samples, trams, time_step, start_time, stop_time)
+    metrics["hourly"] = hourly_profile(samples)
     tracks = trams_to_animation(trams)  # dziennik ruchu dla animacji (niezależny od kroku próbek)
     simulated_lines = sorted({trip.line for tram in trams for trip in tram.schedule})
     return (
@@ -204,32 +208,62 @@ def delay_color(delay_min: float) -> str:
     return DELAY_CLASSES[-1][1]
 
 
+def _pct(value) -> str:
+    return "–" if value is None else f"{value:.0%}"
+
+
+def _day_label(iso: str) -> str:
+    d = date.fromisoformat(iso)
+    return f"{['pn', 'wt', 'śr', 'cz', 'pt', 'sb', 'nd'][d.weekday()]} {d:%d.%m}"
+
+
+def comparable_days(daily: list[dict]) -> list[dict]:
+    """Doby prawie w całości w oknie symulacji (≥ 20 h) - tylko je warto uśredniać i porównywać."""
+    return [d for d in daily if d["hours"] >= 20]
+
+
 def render_metrics(metrics: dict) -> None:
-    cols = st.columns(5)
-    cols[0].metric("W ruchu (szczyt)", metrics["max_in_motion"], help="Największa liczba tramwajów jadących jednocześnie.")
-    cols[1].metric("Opóźnienie (mediana)", f"{metrics['median_delay_s'] / 60:.1f} min")
-    if metrics["punctuality"] is not None:
-        cols[2].metric(
-            "Punktualne kursy",
-            f"{metrics['punctuality']:.0%}",
-            help=(
-                f"Kursy zakończone od {-PUNCTUAL_EARLY_S // 60} min przed do {PUNCTUAL_LATE_S // 60} min po "
-                f"czasie z rozkładu. Za wcześnie: {metrics['early_share']:.0%}, "
-                f"za późno: {metrics['late_share']:.0%}."
-            ),
-        )
+    daily = metrics.get("daily") or []
+    days = comparable_days(daily)
+    multi = len(days) >= 2
+
+    if multi:
+        n = len(days)
+        word = "doby" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "dób"
+        st.markdown(f"#### Średnio na dobę · {n} {word} (doba kursowa 3:00–3:00)")
+        trips = np.mean([d["completed_trips"] for d in days])
+        peak = np.mean([d["max_in_motion"] for d in days])
+        queue = np.mean([d["queue_hours"] for d in days])
+        trips_label, peak_label, queue_label = "Kursy na dobę", "W ruchu (szczyt dnia)", "W kolejkach na dobę"
     else:
-        cols[2].metric("Punktualne kursy", "–")
-    cols[3].metric("Kursy", metrics["completed_trips"], help="Kursy zakończone w oknie symulacji.")
+        trips, peak, queue = metrics["completed_trips"], metrics["max_in_motion"], metrics["queue_hours"]
+        trips_label, peak_label, queue_label = "Kursy", "W ruchu (szczyt)", "W kolejkach"
+
+    cols = st.columns(5)
+    cols[0].metric(peak_label, f"{peak:.0f}", help="Największa liczba tramwajów jadących jednocześnie"
+                   + (" - średnia z dziennych szczytów." if multi else "."))
+    cols[1].metric("Opóźnienie (mediana)", f"{metrics['median_delay_s'] / 60:.1f} min",
+                   help="Typowe opóźnienie jadącego tramwaju (połowa próbek ma mniej, połowa więcej). "
+                        "Bez postojów na pętli.")
+    cols[2].metric(
+        "Punktualne kursy",
+        _pct(metrics["punctuality"]),
+        help=(
+            f"Kursy zakończone od {-PUNCTUAL_EARLY_S // 60} min przed do {PUNCTUAL_LATE_S // 60} min po "
+            f"czasie z rozkładu. Za wcześnie: {_pct(metrics['early_share'])}, "
+            f"za późno: {_pct(metrics['late_share'])}."
+        ),
+    )
+    cols[3].metric(trips_label, f"{trips:,.0f}".replace(",", " "), help="Kursy zakończone w oknie symulacji.")
     cols[4].metric(
-        "W kolejkach",
-        f"{metrics['queue_hours']:.1f} h",
+        queue_label,
+        f"{queue:.1f} h",
         help="Łączny czas, który tramwaje spędziły, czekając przed zajętym przystankiem.",
     )
     pax = metrics.get("passengers")
     if pax:
         cols = st.columns(5)
-        cols[0].metric("Wsiadło", f"{pax['boarded']:,}".replace(",", " "))
+        cols[0].metric("Wsiadło" + (" (razem)" if multi else ""), f"{pax['boarded']:,}".replace(",", " "))
         cols[1].metric("Śr. oczekiwanie", f"{pax['mean_wait_s'] / 60:.1f} min")
         cols[2].metric("Śr. postój", f"{pax['mean_dwell_s']:.0f} s")
         cols[3].metric("Maks. napełnienie", f"{pax['max_fullness']:.0%}")
@@ -238,6 +272,105 @@ def render_metrics(metrics: dict) -> None:
             pax["left_behind_events"],
             help="Liczba postojów, na których część pasażerów nie zmieściła się do tramwaju.",
         )
+    st.info(metrics_summary(metrics, days if multi else []))
+
+
+def metrics_summary(metrics: dict, days: list[dict]) -> str:
+    """Kilka zdań „po ludzku”, żeby nie trzeba było interpretować kafelków."""
+    parts = []
+    if metrics["punctuality"] is not None:
+        on_time = round(metrics["punctuality"] * 10)
+        late = round((metrics["late_share"] or 0) * 10)
+        early = 10 - on_time - late
+        parts.append(
+            f"Na każde 10 kursów ok. **{on_time}** kończy się punktualnie, **{late}** spóźnionych "
+            f"(> {PUNCTUAL_LATE_S // 60} min)"
+            + (f", **{early}** za wcześnie." if early > 0 else ".")
+        )
+    parts.append(f"Typowy jadący tramwaj ma **{metrics['median_delay_s'] / 60:.1f} min** opóźnienia.")
+    hourly = [h for h in metrics.get("hourly") or [] if h["median_delay_min"] is not None]
+    if hourly:
+        # Tylko godziny z normalnym ruchem - w nocy kilka spóźnionych tramwajów zawyża medianę.
+        busy = max(h["avg_in_motion"] for h in hourly)
+        hourly = [h for h in hourly if h["avg_in_motion"] >= 0.3 * busy]
+    if hourly:
+        worst = max(hourly, key=lambda h: h["median_delay_min"])
+        parts.append(
+            f"Najgorzej około **{worst['hour']:02d}:00** (mediana {worst['median_delay_min']:.1f} min)."
+        )
+    rated = [d for d in days if d["punctuality"] is not None]
+    if len(rated) >= 2:
+        best = max(rated, key=lambda d: d["punctuality"])
+        worst = min(rated, key=lambda d: d["punctuality"])
+        if best["punctuality"] - worst["punctuality"] < 0.03:
+            parts.append("Poszczególne doby wypadają podobnie.")
+        else:
+            parts.append(
+                f"Najlepsza doba: **{_day_label(best['day'])}** ({_pct(best['punctuality'])} punktualnych), "
+                f"najgorsza: **{_day_label(worst['day'])}** ({_pct(worst['punctuality'])})."
+            )
+    return " ".join(parts)
+
+
+def daily_figure(days: list[dict]) -> go.Figure:
+    labels = [_day_label(d["day"]) for d in days]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=labels, y=[None if d["punctuality"] is None else d["punctuality"] * 100 for d in days],
+        name="Punktualne kursy [%]", marker_color="#3b82f6", opacity=0.8,
+        hovertemplate="%{x}: %{y:.0f}% punktualnych<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=labels, y=[d["median_delay_min"] for d in days], yaxis="y2",
+        name="Opóźnienie - mediana [min]", mode="lines+markers", line=dict(color="#ef4444", width=3),
+        hovertemplate="%{x}: mediana %{y:.1f} min<extra></extra>",
+    ))
+    fig.update_layout(
+        height=380, margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(type="category"),
+        yaxis=dict(title="Punktualne kursy [%]", range=[0, 100]),
+        yaxis2=dict(title="Opóźnienie [min]", overlaying="y", side="right", rangemode="tozero",
+                    tickformat=".0f", showgrid=False),
+        legend=dict(orientation="h", y=1.08),
+    )
+    return fig
+
+
+def daily_table(days: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "Doba": _day_label(d["day"]),
+        "Godzin w oknie": d["hours"],
+        "Kursy": d["completed_trips"],
+        "Punktualne": _pct(d["punctuality"]),
+        "Spóźnione > 3 min": _pct(d["late_share"]),
+        "Opóźnienie - mediana [min]": round(d["median_delay_min"], 1),
+        "Szczyt w ruchu": d["max_in_motion"],
+        "W kolejkach [h]": round(d["queue_hours"], 1),
+    } for d in days])
+
+
+def hourly_figure(hourly: list[dict]) -> go.Figure:
+    hours = [f"{h['hour']:02d}:00" for h in hourly]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=hours, y=[h["avg_in_motion"] for h in hourly], name="Tramwaje w ruchu (średnio)",
+        marker_color="#9ca3af", opacity=0.7,
+        hovertemplate="%{x}: średnio %{y:.0f} tramwajów w ruchu<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=hours, y=[h["median_delay_min"] for h in hourly], yaxis="y2",
+        name="Opóźnienie - mediana [min]", mode="lines+markers", line=dict(color="#ef4444", width=3),
+        hovertemplate="%{x}: mediana %{y:.1f} min<extra></extra>",
+    ))
+    fig.update_layout(
+        height=380, margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(type="category", title="Godzina"),
+        yaxis=dict(title="Tramwaje w ruchu", rangemode="tozero"),
+        yaxis2=dict(title="Opóźnienie [min]", overlaying="y", side="right", rangemode="tozero",
+                    tickformat=".0f", showgrid=False),
+        legend=dict(orientation="h", y=1.08),
+    )
+    return fig
 
 
 def delay_by_line_figure(df: pd.DataFrame, line_colors: dict[str, str]) -> go.Figure:
@@ -416,7 +549,34 @@ if skipped_lines:
 
 st_folium(m, width="100%", height=700, returned_objects=[])
 
-tab_lines, tab_td = st.tabs(["Opóźnienia według linii", "Wykres czas–droga"])
+tab_lines, tab_days, tab_hours, tab_td = st.tabs(
+    ["Opóźnienia według linii", "Dzień po dniu", "Profil doby", "Wykres czas–droga"]
+)
+with tab_days:
+    all_days = (metrics or {}).get("daily") or []
+    days = comparable_days(all_days)
+    if not all_days:
+        st.info("Brak danych dziennych (starszy plik symulacji).")
+    else:
+        if len(days) >= 2:
+            st.plotly_chart(daily_figure(days), width="stretch")
+        else:
+            st.caption("Porównanie dni pojawi się, gdy okres obejmie co najmniej dwie pełne doby.")
+        st.dataframe(daily_table(all_days), hide_index=True, width="stretch")
+        st.caption(
+            "Doba kursowa liczona od 3:00 do 3:00 (nocne kursy po północy należą do poprzedniego dnia). "
+            "Średnie na górze strony biorą tylko doby z co najmniej 20 h w oknie symulacji."
+        )
+with tab_hours:
+    hourly = (metrics or {}).get("hourly") or []
+    if not hourly:
+        st.info("Brak danych godzinowych (starszy plik symulacji).")
+    else:
+        st.plotly_chart(hourly_figure(hourly), width="stretch")
+        st.caption(
+            "Przeciętna doba: każda godzina uśredniona po wszystkich dniach symulacji. "
+            "Szare słupki - ile tramwajów jedzie naraz, czerwona linia - typowe opóźnienie o tej godzinie."
+        )
 with tab_lines:
     if delay_df.empty:
         st.info("Brak danych o opóźnieniach.")

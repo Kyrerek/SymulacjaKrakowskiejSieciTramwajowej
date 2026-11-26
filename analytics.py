@@ -6,6 +6,7 @@ małe zestawienia (a nie setki tysięcy próbek).
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,12 @@ from models import TramStatus
 # Kurs punktualny: na ostatnim przystanku od 1 min przed do 3 min po czasie z rozkładu.
 PUNCTUAL_EARLY_S = -60
 PUNCTUAL_LATE_S = 180
+# Doba kursowa zaczyna się o 3:00 - nocne kursy po północy liczą się do poprzedniego dnia.
+SERVICE_DAY_START_H = 3
+
+
+def service_day(ts: datetime) -> date:
+    return (ts - timedelta(hours=SERVICE_DAY_START_H)).date()
 
 
 def compute_metrics(samples, trams, time_step: float, passenger_summary: dict | None = None) -> dict:
@@ -37,6 +44,76 @@ def compute_metrics(samples, trams, time_step: float, passenger_summary: dict | 
     if passenger_summary:
         metrics["passengers"] = passenger_summary
     return metrics
+
+
+def daily_metrics(samples, trams, time_step: float, start_time: datetime, stop_time: datetime) -> list[dict]:
+    """Wskaźniki osobno dla każdej doby kursowej (3:00-3:00), żeby dało się porównać dni.
+
+    ``hours`` mówi, ile godzin danej doby było w oknie symulacji - pierwsza i ostatnia
+    doba bywają niepełne, więc ich liczba kursów nie jest porównywalna z resztą.
+    """
+    timestamps: dict[date, set] = defaultdict(set)
+    in_motion: dict[date, Counter] = defaultdict(Counter)
+    delays: dict[date, list[float]] = defaultdict(list)
+    queue: Counter = Counter()
+    for s in samples:
+        day = service_day(s.timestamp)
+        timestamps[day].add(s.timestamp)
+        if s.status == TramStatus.ARRIVAL:
+            in_motion[day][s.timestamp] += 1
+        elif s.status == TramStatus.WAIT:
+            queue[day] += 1
+        if s.status != TramStatus.LAYOVER:
+            delays[day].append(s.delay_s)
+
+    trip_delays: dict[date, list[float]] = defaultdict(list)
+    for tram in trams:
+        for trip in tram.completed_trips:
+            if "end_time" in trip:
+                trip_delays[service_day(trip["end_time"])].append(trip["end_delay_s"])
+
+    rows = []
+    for day in sorted(timestamps):
+        day_start = datetime.combine(day, datetime.min.time()) + timedelta(hours=SERVICE_DAY_START_H)
+        overlap = min(stop_time, day_start + timedelta(days=1)) - max(start_time, day_start)
+        ends = np.asarray(trip_delays.get(day, []))
+        rows.append({
+            "day": day.isoformat(),
+            "hours": round(max(0.0, overlap.total_seconds()) / 3600.0, 1),
+            "completed_trips": int(len(ends)),
+            "punctuality": float(np.mean((ends >= PUNCTUAL_EARLY_S) & (ends <= PUNCTUAL_LATE_S)))
+            if len(ends) else None,
+            "late_share": float(np.mean(ends > PUNCTUAL_LATE_S)) if len(ends) else None,
+            "median_delay_min": float(np.median(delays[day])) / 60.0 if delays[day] else 0.0,
+            "max_in_motion": max(in_motion[day].values()) if in_motion[day] else 0,
+            "queue_hours": queue[day] * time_step / 3600.0,
+        })
+    return rows
+
+
+def hourly_profile(samples) -> list[dict]:
+    """Przeciętna godzina doby (uśredniona po wszystkich dniach symulacji).
+
+    Dla każdej godziny 0-23: średnia liczba tramwajów w ruchu i mediana opóźnienia.
+    """
+    ticks: dict[int, set] = defaultdict(set)
+    moving: Counter = Counter()
+    delays: dict[int, list[float]] = defaultdict(list)
+    for s in samples:
+        h = s.timestamp.hour
+        ticks[h].add(s.timestamp)
+        if s.status == TramStatus.ARRIVAL:
+            moving[h] += 1
+        if s.status != TramStatus.LAYOVER:
+            delays[h].append(s.delay_s)
+    return [
+        {
+            "hour": h,
+            "avg_in_motion": moving[h] / len(ticks[h]),
+            "median_delay_min": float(np.median(delays[h])) / 60.0 if delays[h] else None,
+        }
+        for h in sorted(ticks)
+    ]
 
 
 def delay_by_line(samples) -> pd.DataFrame:
