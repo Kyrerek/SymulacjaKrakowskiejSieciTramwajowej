@@ -9,6 +9,7 @@ from models.TramStatus import TramStatus
 if TYPE_CHECKING:
     from fleet import TramType
     from passengers import PassengerSystem
+    from schedule import ScheduledTrip
 
 
 class Tram(Point):
@@ -22,6 +23,7 @@ class Tram(Point):
         delay=lambda time, stop: 1000,
         tram_type: TramType | None = None,
         passengers: PassengerSystem | None = None,
+        schedule: list[ScheduledTrip] | None = None,
     ):
         super().__init__(route[0].lat, route[0].lon)
         self.id = id_
@@ -32,6 +34,11 @@ class Tram(Point):
         self.status = TramStatus.SLEEP
         self.delay_ = delay
         self.current_stop: Stop | None = None
+
+        # Rozkład jazdy: lista kursów bloku (None = stary tryb cyklicznej trasy)
+        self.schedule = schedule
+        self.current_trip: ScheduledTrip | None = None
+        self.delay_s: float = 0.0             # opóźnienie względem rozkładu (ostatni przystanek)
 
         # Pasażerowie i tabor
         self.tram_type = tram_type
@@ -47,6 +54,14 @@ class Tram(Point):
         self._d1: float = 0.0
         self._t0: float = 0.0
         self._t1: float = 0.0
+
+    @property
+    def line(self) -> str:
+        return self.current_trip.line if self.current_trip is not None else str(self.id)
+
+    @property
+    def headsign(self) -> str:
+        return self.current_trip.headsign if self.current_trip is not None else ""
 
     @property
     def capacity(self) -> int:

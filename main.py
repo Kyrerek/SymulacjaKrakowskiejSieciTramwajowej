@@ -1,18 +1,17 @@
 """Mapa i prosta animacja wszystkich linii tramwajowych z GTFS."""
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-import copy
 import hashlib
-import random
+import math
+
+import numpy as np
 
 import folium
-from folium.plugins import TimestampedGeoJson
 import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
 
 import tram_data
-from models import Tram
 from motion import TramMotion
 from route_geometry import (
     build_cyclic_route,
@@ -20,6 +19,8 @@ from route_geometry import (
     get_available_lines,
     get_route_geometry,
 )
+from schedule import build_schedule_network
+from tram_animation import TramAnimation, samples_to_tracks
 from trainers import StopRoadTrainer
 
 
@@ -30,42 +31,18 @@ LINE_COLORS = [
 ]
 
 
-def samples_to_geojson_features(samples, line_colors: dict[str, str]) -> list[dict]:
-    geojson_features = []
-    for s in samples:
-        tram_id = s["tram_id"] if isinstance(s, dict) else s.tram_id
-        tram_name = s["tram_name"] if isinstance(s, dict) else s.tram_name
-        status = s["status"] if isinstance(s, dict) else s.status.name
-        timestamp = datetime.fromisoformat(s["timestamp"]) if isinstance(s, dict) else s.timestamp
-        lat = s["lat"] if isinstance(s, dict) else s.lat
-        lon = s["lon"] if isinstance(s, dict) else s.lon
-        color = line_colors.get(str(tram_id), "#e6194b")
-        geojson_features.append({
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": [lon, lat],
-            },
-            "properties": {
-                "tram_id": str(tram_id),
-                "times": [timestamp.strftime("%Y-%m-%dT%H:%M:%S")],
-                "icon": "circle",
-                "iconoptions": {
-                    "color": color,
-                    "fillColor": color,
-                    "fillOpacity": 1.0,
-                    "radius": 9,
-                    "weight": 2,
-                },
-                "popup": f"<b>{tram_name}</b><br>Status: {status}<br>Czas: {timestamp:%H:%M:%S}",
-            },
-        })
-    return geojson_features
+# Górny limit liczby próbek animacji - powyżej krok czasowy jest zwiększany,
+# żeby strona z mapą nie rosła ponad kilka MB. Animacja i tak interpoluje
+# pozycje między próbkami, więc większy krok nie powoduje skoków.
+MAX_ANIMATION_SAMPLES = 350_000
 
 
 st.set_page_config(page_title="Symulacja sieci tramwajowej Krakowa", layout="wide")
 st.title("Symulacja krakowskiej sieci tramwajowej")
-st.caption("Wszystkie linie: rzeczywista geometria GTFS i demonstracyjna animacja jazdy.")
+st.caption(
+    "Tramwaje kursują według rozkładu GTFS (jeden pojazd na blok kursów); "
+    "czasy przejazdu odcinków losowane z rozkładów wytrenowanych na danych realtime."
+)
 
 
 @st.cache_data
@@ -126,70 +103,55 @@ def build_route_networks_cached(lines: tuple[str, ...]):
     return route_networks, tuple(skipped)
 
 
+@st.cache_resource
+def build_schedule_network_cached(start_iso: str, stop_iso: str, lines: tuple[str, ...]):
+    return build_schedule_network(
+        datetime.fromisoformat(start_iso),
+        datetime.fromisoformat(stop_iso),
+        lines,
+    )
+
+
 @st.cache_data
 def run_cached_simulation(
     start_iso: str,
     stop_iso: str,
     lines: tuple[str, ...],
-    target_time_step: int = 5,
+    min_time_step: int = 5,
 ):
+    """Symulacja z rozkładu GTFS: jeden tramwaj na blok (ciąg kursów jednego pojazdu)."""
     start_time = datetime.fromisoformat(start_iso)
     stop_time = datetime.fromisoformat(stop_iso)
-    sim_duration_sec = int((stop_time - start_time).total_seconds())
-    route_networks, network_skipped = build_route_networks_cached(lines)
-    trainer = load_trainer()
-    seed = int(hashlib.sha256(f"{start_iso}|{stop_iso}|{lines}".encode()).hexdigest()[:16], 16)
-    rng = random.Random(seed)
-    trams = []
+    sim_duration_sec = (stop_time - start_time).total_seconds()
 
-    for line in lines:
-        route = route_networks.get(str(line))
-        if route is None:
-            continue
+    # Sieć jest współdzielona z cache; motion.run_trams na starcie zakłada od nowa
+    # blokady peronów i kolejek, a odcinki dostają tu świeże funkcje czasu przejazdu.
+    network = build_schedule_network_cached(start_iso, stop_iso, lines)
+    from_sampler, from_schedule = network.bind_travel_times(load_trainer())
+    trams = network.make_trams(start_time, stop_time)
 
-        cyclic_stops = copy.deepcopy(route["stops"])
+    seed = int(hashlib.sha256(f"{start_iso}|{stop_iso}|{lines}".encode()).hexdigest()[:8], 16)
+    np.random.seed(seed)  # samplery czasów przejazdu losują z np.random
 
-        speed_factor = rng.uniform(0.1, 2)
-        if trainer is not None:
-            trainer.bind_to_route(cyclic_stops)
-        else:
-            for stop in cyclic_stops:
-                for road in stop.roads:
-                    est_time = max(80.0, road.total_length / 2.5) * speed_factor
-                    road.delay_ = lambda t, d=est_time: d
-
-        random_start = start_time + timedelta(seconds=rng.randint(0, min(3600, sim_duration_sec)))
-        random_loops = rng.randint(1, 3)
-        trams.append(Tram(
-            id_=line,
-            route=cyclic_stops,
-            start_time=random_start,
-            loop_route_num=random_loops,
-            name=f"Linia {line} (start {random_start:%H:%M:%S}, {random_loops}x)",
-            delay=lambda t, s: 30,
-        ))
-
+    time_step = max(min_time_step, math.ceil(len(trams) * sim_duration_sec / MAX_ANIMATION_SAMPLES))
+    time_step = int(math.ceil(time_step / 5) * 5)
     samples = TramMotion(
         start_time=start_time,
         stop_time=stop_time,
-        target_time_step=target_time_step,
+        target_time_step=time_step,
     ).run_trams(trams)
 
-    return (
-        [
-            {
-                "tram_id": sample.tram_id,
-                "tram_name": sample.tram_name,
-                "status": sample.status.name,
-                "timestamp": sample.timestamp.isoformat(),
-                "lat": sample.lat,
-                "lon": sample.lon,
-            }
-            for sample in samples
-        ],
-        tuple(line for line in lines if str(line) in route_networks),
-        network_skipped,
-    )
+    delays = [s.delay_s for s in samples]
+    stats = {
+        "trams": len(trams),
+        "time_step": time_step,
+        "samples": len(samples),
+        "roads_from_sampler": from_sampler,
+        "roads_from_schedule": from_schedule,
+        "median_delay_s": float(np.median(delays)) if delays else 0.0,
+    }
+    simulated_lines = sorted({trip.line for tram in trams for trip in tram.schedule})
+    return samples_to_tracks(samples, start_time, time_step), tuple(simulated_lines), stats
 
 
 feed_min, feed_max = feed_date_range()
@@ -273,15 +235,13 @@ if not loaded_lines:
     st.error("Nie udało się zbudować żadnej trasy do animacji.")
     st.stop()
 
-sample_dicts, loaded_lines_tuple, network_skipped = run_cached_simulation(
+tracks, simulated_lines, sim_stats = run_cached_simulation(
     start_time.isoformat(),
     stop_time.isoformat(),
-    tuple(lines),
+    tuple(str(line) for line in lines),
     5,
 )
-loaded_lines = list(loaded_lines_tuple)
-skipped_lines = list(dict.fromkeys([*route_skipped, *network_skipped]))
-features = samples_to_geojson_features(sample_dicts, line_colors)
+skipped_lines = list(route_skipped)
 
 all_points = [point for road, _, _ in display_roads for point in road.points]
 min_lat = min(point.lat for point in all_points)
@@ -316,32 +276,21 @@ if show_stops:
             tooltip=stop.name,
         ).add_to(m)
 
-TimestampedGeoJson(
-    {"type": "FeatureCollection", "features": features},
-    period="PT5S",
-    duration="PT0S",
-    add_last_point=True,
-    auto_play=False,
-    loop=False,
-    max_speed=60,
-    loop_button=True,
-    time_slider_drag_update=True,
+TramAnimation(
+    tracks,
+    line_colors,
+    start_time=start_time,
+    duration_s=(stop_time - start_time).total_seconds(),
 ).add_to(m)
 
 st.caption(
     f"{start_time:%d.%m.%Y %H:%M} – {stop_time:%d.%m.%Y %H:%M} · "
-    f"{len(loaded_lines)} linii · {len(features)} punktów animacji"
+    f"{len(simulated_lines)} linii · {sim_stats['trams']} tramwajów (bloków) · "
+    f"krok próbkowania {sim_stats['time_step']} s · mediana opóźnienia {sim_stats['median_delay_s'] / 60:.1f} min · "
+    f"czasy przejazdu: {sim_stats['roads_from_sampler']} odcinków z danych realtime, "
+    f"{sim_stats['roads_from_schedule']} z rozkładu"
 )
 if skipped_lines:
     st.warning("Pominięte linie bez kompletnej trasy w obu kierunkach: " + ", ".join(skipped_lines))
-
-clean_css = """
-<style>
-.timecontrol-speed::before {
-    display: none !important;
-}
-</style>
-"""
-m.get_root().html.add_child(folium.Element(clean_css))
 
 st_folium(m, width="100%", height=700, returned_objects=[])

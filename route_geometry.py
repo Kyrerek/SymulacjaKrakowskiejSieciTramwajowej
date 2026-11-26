@@ -127,6 +127,43 @@ def _closest_shape_index(
     )
 
 
+def split_shape_by_stops(shape_points, stops) -> tuple[list[int], list[list[Point]]]:
+    """Dzieli kształt trasy na odcinki między kolejnymi przystankami.
+
+    ``shape_points`` i ``stops`` to dowolne obiekty z atrybutami ``lat``/``lon``.
+    Zwraca indeksy punktów kształtu dopasowanych do przystanków oraz listę
+    ``len(stops) - 1`` list punktów (zaczynających i kończących się dokładnie
+    na współrzędnych przystanków).
+    """
+    shape_points = tuple(shape_points)
+    stop_shape_indexes: list[int] = []
+    search_from = 0
+    for stop in stops:
+        index = _closest_shape_index(stop, shape_points, search_from)
+        stop_shape_indexes.append(index)
+        search_from = index
+
+    segments: list[list[Point]] = []
+    for index, (start, end) in enumerate(zip(stops, stops[1:])):
+        # Użycie dokładnych współrzędnych przystanków zapewnia, że marker
+        # tramwaju zaczyna i kończy odcinek dokładnie na przystanku.
+        segment_points = [Point(start.lat, start.lon)]
+        segment_points.extend(
+            Point(point.lat, point.lon)
+            for point in shape_points[stop_shape_indexes[index]:stop_shape_indexes[index + 1] + 1]
+        )
+        segment_points.append(Point(end.lat, end.lon))
+
+        # Usunięcie bezpośrednio powtórzonych punktów zapobiega odcinkom
+        # o długości zero podczas interpolacji w motion.py.
+        unique_points = [segment_points[0]]
+        for point in segment_points[1:]:
+            if point.lat != unique_points[-1].lat or point.lon != unique_points[-1].lon:
+                unique_points.append(point)
+        segments.append(unique_points)
+    return stop_shape_indexes, segments
+
+
 def build_stop_roads(
     tram_number,
     direction_id,
@@ -154,43 +191,15 @@ def build_stop_roads(
     if len(geometry.points) < 2:
         raise ValueError("Geometria trasy musi mieć co najmniej dwa punkty")
 
-    stop_shape_indexes: list[int] = []
-    search_from = 0
-    for stop in geometry.stops:
-        index = _closest_shape_index(stop, geometry.points, search_from)
-        stop_shape_indexes.append(index)
-        search_from = index
-
     model_stops = [
         Stop(id_=stop.stop_id, lat=stop.lat, lon=stop.lon, name=stop.name)
         for stop in geometry.stops
     ]
+    stop_shape_indexes, segments = split_shape_by_stops(geometry.points, geometry.stops)
     roads: list[StopRoad] = []
-    for index, (start, end) in enumerate(zip(model_stops, model_stops[1:])):
-        start_shape_index = stop_shape_indexes[index]
-        end_shape_index = stop_shape_indexes[index + 1]
-
-        # Użycie dokładnych współrzędnych przystanków zapewnia, że marker
-        # tramwaju zaczyna i kończy odcinek dokładnie na przystanku.
-        segment_points = [Point(start.lat, start.lon)]
-        segment_points.extend(
-            Point(point.lat, point.lon)
-            for point in geometry.points[start_shape_index:end_shape_index + 1]
-        )
-        segment_points.append(Point(end.lat, end.lon))
-
-        # Usunięcie bezpośrednio powtórzonych punktów zapobiega odcinkom
-        # o długości zero podczas interpolacji w motion.py.
-        unique_points = [segment_points[0]]
-        for point in segment_points[1:]:
-            if point.lat != unique_points[-1].lat or point.lon != unique_points[-1].lon:
-                unique_points.append(point)
-
-        road = StopRoad(start=start, end=end, points=unique_points)
-        road.length_m = sum(
-            first.distance_to(second)
-            for first, second in zip(unique_points, unique_points[1:])
-        )
+    for (start, end), points in zip(zip(model_stops, model_stops[1:]), segments):
+        road = StopRoad(start=start, end=end, points=points)
+        road.length_m = road.total_length
         roads.append(road)
 
     for stop in model_stops:
