@@ -261,7 +261,7 @@ class TramMotion:
         """Jazda według kursów bloku: odjazd z początku kursu nie wcześniej niż w rozkładzie."""
         at_stop = None
         route_offset = 0  # indeks pierwszego przystanku kursu w tram.route
-        for trip in tram.schedule:
+        for trip_index, trip in enumerate(tram.schedule):
             first = trip.stops[0]
             if at_stop is None or at_stop.id != first.stop.id:
                 # Pierwszy kurs albo kurs po zjeździe: tramwaj pojawia się przed odjazdem.
@@ -276,18 +276,27 @@ class TramMotion:
 
             # Peron początkowy kursu zajęty przez cały postój przed odjazdem.
             first_lock = first.stop.lock or first.stop.init_simpy(self.env)
-            tram.set_static(first.stop, TramStatus.WAIT if first_lock.count > 0 else TramStatus.LAYOVER)
+            # Opóźniony tramwaj nie powinien być oznaczany jako oczekujący na pętli,
+            # nawet jeśli do planowanego odjazdu kolejnego kursu zostało jeszcze trochę
+            # czasu. W takim przypadku kolejny kurs zaczyna od razu po zwolnieniu peronu.
+            can_layover = at_stop is None or tram.delay_s <= 0.0
+            if first_lock.count > 0:
+                tram.set_static(first.stop, TramStatus.WAIT)
+            elif can_layover and first.departure > self.current_time:
+                tram.set_static(first.stop, TramStatus.LAYOVER)
             first_req = first_lock.request()
             yield first_req
             first.stop.reserve(tram)
-            tram.set_static(first.stop, TramStatus.LAYOVER)
+            if can_layover and first.departure > self.current_time:
+                tram.set_static(first.stop, TramStatus.LAYOVER)
 
             if tram.passengers is not None:
                 # Wsiadanie na przystanku początkowym kursu tuż przed odjazdem.
                 yield from self._wait_until(first.departure - timedelta(seconds=BOARD_BEFORE_DEPARTURE_S))
                 tram.set_static(first.stop, TramStatus.DWEL)
                 yield self.env.timeout(tram.dwell_delay(self.current_time, first.stop))
-                tram.set_static(first.stop, TramStatus.LAYOVER)
+                if can_layover and first.departure > self.current_time:
+                    tram.set_static(first.stop, TramStatus.LAYOVER)
 
             yield from self._wait_until(first.departure)
             tram.delay_s = (self.current_time - first.departure).total_seconds()
@@ -309,7 +318,14 @@ class TramMotion:
                 "max_delay_s": max_delay,
             })
             tram.trip_seg = len(trip.stops) - 1
-            tram.set_static(trip.stops[-1].stop, TramStatus.LAYOVER)
+            next_trip = tram.schedule[trip_index + 1] if trip_index + 1 < len(tram.schedule) else None
+            if (
+                next_trip is not None
+                and next_trip.stops[0].stop.id == trip.stops[-1].stop.id
+                and tram.delay_s <= 0.0
+                and self.current_time < next_trip.departure
+            ):
+                tram.set_static(trip.stops[-1].stop, TramStatus.LAYOVER)
             at_stop = trip.stops[-1].stop
             route_offset += len(trip.stops)
 
