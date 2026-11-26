@@ -38,3 +38,5 @@ cache/
 # === Pliki tymczasowe systemu operacyjnego ===
 .DS_Store
 Thumbs.db
+# === Claude Code (lokalne ustawienia) ===
+.claude/
