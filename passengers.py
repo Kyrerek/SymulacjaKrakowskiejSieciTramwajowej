@@ -135,9 +135,10 @@ class PassengerSystem:
         self._dirty = True
 
     # ------------------------------------------------------------- konfiguracja
-    def register_route(self, stops: list["Stop"]) -> None:
+    def register_route(self, stops: list["Stop"], cyclic: bool = True) -> None:
         """Rejestruje trasę (listę przystanków, także cykliczną): ustala, dokąd można
-        z danego przystanku dojechać w ramach `horizon` przystanków."""
+        z danego przystanku dojechać w ramach `horizon` przystanków. Dla pojedynczego
+        kursu z rozkładu `cyclic=False` - za ostatnim przystankiem trasa się kończy."""
         n = len(stops)
         for s in stops:
             if str(s.id) not in self._states:
@@ -145,7 +146,8 @@ class PassengerSystem:
                     str(s.id), s.name, s.lat, s.lon, self.weights.weight(s))
         for i, origin in enumerate(stops):
             st = self._states[str(origin.id)]
-            for k in range(1, min(self.params.horizon, n - 1) + 1):
+            last_k = min(self.params.horizon, n - 1) if cyclic else min(self.params.horizon, n - 1 - i)
+            for k in range(1, last_k + 1):
                 dest = str(stops[(i + k) % n].id)
                 if dest != st.stop_id and k < st.reach.get(dest, 10**9):
                     st.reach[dest] = k

@@ -14,6 +14,8 @@ class SidebarConfig:
     stop_time: datetime
     show_stops: bool
     loaded_sim: dict[str, Any] | None = None
+    passengers_on: bool = False
+    demand_scale: float = 1.0
 
 
 @st.cache_data
@@ -28,6 +30,8 @@ def render_sidebar(feed_min: date, feed_max: date, default_day: date) -> Sidebar
         uploaded_file = None
         start_time = None
         stop_time = None
+        passengers_on = False
+        demand_scale = 1.0
 
         if source_mode == "Nowa symulacja":
             st.header("Czas symulacji")
@@ -70,6 +74,18 @@ def render_sidebar(feed_min: date, feed_max: date, default_day: date) -> Sidebar
                     )
                 start_time = datetime.combine(start_day, from_time)
                 stop_time = datetime.combine(end_day, to_time)
+
+            st.header("Pasażerowie")
+            passengers_on = st.checkbox(
+                "Symuluj pasażerów",
+                value=False,
+                help=(
+                    "Eksperymentalne: postój na przystanku liczony z liczby wsiadających i wysiadających "
+                    "(zamiast stałych 30 s), tramwaje dostają losowy typ wagonu z data/fleet.json. "
+                    "Parametry popytu są przybliżone - wyniki traktuj jako analizę wrażliwości."
+                ),
+            )
+            demand_scale = st.slider("Mnożnik popytu", 0.2, 5.0, 1.0, 0.1, disabled=not passengers_on)
         else:
             st.header("Plik symulacji")
             uploaded_file = st.file_uploader("Wybierz plik JSON", type=["json"])
@@ -106,6 +122,8 @@ def render_sidebar(feed_min: date, feed_max: date, default_day: date) -> Sidebar
         stop_time=stop_time,
         show_stops=show_stops,
         loaded_sim=None,
+        passengers_on=passengers_on,
+        demand_scale=float(demand_scale),
     )
 
 
@@ -116,7 +134,9 @@ def render_sidebar_export(
     skipped_lines: list[str],
     sim_stats: dict[str, Any],
     tracks: list[dict[str, Any]],
+    extras: dict[str, Any] | None = None,
 ) -> None:
+    """`extras` - dodatkowe wyniki (np. wskaźniki i dane wykresów) zapisywane obok śladów."""
     export_payload = {
         "start_time": start_time.isoformat(),
         "stop_time": stop_time.isoformat(),
@@ -125,6 +145,7 @@ def render_sidebar_export(
         "skipped_lines": list(skipped_lines),
         "stats": sim_stats,
         "tracks": tracks,
+        **(extras or {}),
     }
     export_json = json.dumps(
         export_payload,
@@ -140,5 +161,5 @@ def render_sidebar_export(
             data=export_json,
             file_name=f"sim_{start_time:%Y%m%d_%H%M}_{stop_time:%Y%m%d_%H%M}.json",
             mime="application/json",
-            use_container_width=True,
+            width="stretch",
         )

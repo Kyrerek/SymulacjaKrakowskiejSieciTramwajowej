@@ -29,6 +29,10 @@ from models import Point, Stop, StopRoad, Tram
 from route_geometry import split_shape_by_stops
 
 if TYPE_CHECKING:
+    import numpy as np
+
+    from fleet import Fleet
+    from passengers import PassengerSystem
     from trainers import StopRoadTrainer
 
 # Ile sekund przed odjazdem pierwszego kursu (albo kursu po zjeździe) tramwaj
@@ -99,13 +103,26 @@ class ScheduleNetwork:
                 from_schedule += 1
         return from_sampler, from_schedule
 
-    def make_trams(self, start_time: datetime, stop_time: datetime, dwell_s: float = DWELL_S) -> list[Tram]:
+    def make_trams(
+        self,
+        start_time: datetime,
+        stop_time: datetime,
+        dwell_s: float = DWELL_S,
+        passengers: PassengerSystem | None = None,
+        fleet: Fleet | None = None,
+        rng: np.random.Generator | None = None,
+    ) -> list[Tram]:
         """Tramwaje dla bloków, które mają jakikolwiek odjazd w oknie symulacji.
 
         Kursy już trwające w chwili startu są przycinane do pierwszego przystanku,
         z którego odjazd wypada nie wcześniej niż ``start_time``.
+
+        Z ``passengers`` postój liczy PassengerSystem (zamiast stałego ``dwell_s``),
+        a każdy kurs jest w nim rejestrowany jako trasa bez zawracania. ``fleet``
+        losuje typ wagonu (pojemność, drzwi) dla każdego bloku.
         """
         trams: list[Tram] = []
+        registered: set[tuple[str, ...]] = set()
         for block in self.blocks:
             trips = _trim_block(block.trips, start_time, stop_time)
             if not trips:
@@ -113,6 +130,12 @@ class ScheduleNetwork:
             first = trips[0]
             appear = max(start_time, first.departure - timedelta(seconds=APPEAR_BEFORE_S))
             route = [s.stop for trip in trips for s in trip.stops]
+            if passengers is not None:
+                for trip in trips:
+                    ids = tuple(str(s.stop.id) for s in trip.stops)
+                    if ids not in registered:
+                        registered.add(ids)
+                        passengers.register_route([s.stop for s in trip.stops], cyclic=False)
             tram = Tram(
                 id_=block.key,
                 route=route,
@@ -120,6 +143,8 @@ class ScheduleNetwork:
                 loop_route_num=1,
                 name=f"Blok {block.block_id}",
                 delay=lambda time, stop, d=dwell_s: d,
+                tram_type=fleet.sample(rng) if fleet is not None and rng is not None else None,
+                passengers=passengers,
                 schedule=trips,
             )
             trams.append(tram)

@@ -5,5 +5,6 @@ class TramStatus(Enum):
     ARRIVAL = auto(),
     WAIT = auto(),
     DWEL = auto(),
+    LAYOVER = auto(),   # postój na pętli / oczekiwanie na odjazd z rozkładu
     TERMINATED = auto()
 

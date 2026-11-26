@@ -8,6 +8,7 @@ from schedule import APPEAR_BEFORE_S
 
 TRAM_SPACING_M = 45.0
 STOP_BUFFER_M = 45.0
+BOARD_BEFORE_DEPARTURE_S = 30.0
 
 # Parametry kontroli mijanych przystanków innych linii (bez zatrzymywania na wymianę pasażerów)
 PASS_CLEAR_M = 15.0      # ile metrów za mijanym peronem zwalnia blokadę
@@ -124,6 +125,8 @@ class SimulationSample:
     line: str = ""
     headsign: str = ""
     delay_s: float = 0.0
+    trip_id: str = ""
+    progress: float | None = None     # postęp na kursie w przystankach (dla wykresu czas-droga)
     load: int = 0
     capacity: int = 0
     fullness: float = 0.0
@@ -153,6 +156,9 @@ class TramMotion:
     def run_trams(self, trams: list[Tram]) -> list[SimulationSample]:
         self.samples = []
         max_time = (self.stop_time - self.start_time).total_seconds()
+        for tram in trams:
+            tram.clock = lambda: self.env.now
+            tram.events = []
         if self.env.now >= max_time:
             return self.samples
 
@@ -222,13 +228,13 @@ class TramMotion:
     def _start_tram(self, tram: Tram):
         wait_time = (tram.start_time - self.current_time).total_seconds()
         if wait_time < 0:
-            tram.status = TramStatus.TERMINATED
+            tram.hide(TramStatus.TERMINATED)
             return
         if wait_time > 0:
             yield self.env.timeout(wait_time)
 
         yield from self._run_tram(tram)
-        tram.status = TramStatus.TERMINATED
+        tram.hide(TramStatus.TERMINATED)
 
     def _drive_segment(self, tram: Tram, road: StopRoad, d0: float, d1: float, total_travel: float):
         if road.total_length <= 0 or d1 <= d0 + 1e-6:
@@ -259,28 +265,51 @@ class TramMotion:
             first = trip.stops[0]
             if at_stop is None or at_stop.id != first.stop.id:
                 # Pierwszy kurs albo kurs po zjeździe: tramwaj pojawia się przed odjazdem.
-                tram.status = TramStatus.SLEEP
                 tram.current_trip = None
+                tram.hide(TramStatus.SLEEP)
                 yield from self._wait_until(first.departure - timedelta(seconds=APPEAR_BEFORE_S))
 
             tram.current_trip = trip
             tram.route_pos = route_offset
-            tram.set_static(first.stop, TramStatus.WAIT)
+            tram.trip_offset = route_offset
+            tram.trip_seg = 0
 
+            # Peron początkowy kursu zajęty przez cały postój przed odjazdem.
             first_lock = first.stop.lock or first.stop.init_simpy(self.env)
+            tram.set_static(first.stop, TramStatus.WAIT if first_lock.count > 0 else TramStatus.LAYOVER)
             first_req = first_lock.request()
             yield first_req
             first.stop.reserve(tram)
+            tram.set_static(first.stop, TramStatus.LAYOVER)
+
+            if tram.passengers is not None:
+                # Wsiadanie na przystanku początkowym kursu tuż przed odjazdem.
+                yield from self._wait_until(first.departure - timedelta(seconds=BOARD_BEFORE_DEPARTURE_S))
+                tram.set_static(first.stop, TramStatus.DWEL)
+                yield self.env.timeout(tram.dwell_delay(self.current_time, first.stop))
+                tram.set_static(first.stop, TramStatus.LAYOVER)
 
             yield from self._wait_until(first.departure)
             tram.delay_s = (self.current_time - first.departure).total_seconds()
+            max_delay = tram.delay_s
 
             first.stop.release()
             first_lock.release(first_req)
 
             for pos, (prev, nxt) in enumerate(zip(trip.stops, trip.stops[1:]), start=1):
+                tram.start_segment(pos - 1)
                 yield from self._travel_to(tram, prev.stop, nxt.stop, route_offset + pos)
                 tram.delay_s = (self.current_time - nxt.departure).total_seconds()
+                max_delay = max(max_delay, tram.delay_s)
+            tram.completed_trips.append({
+                "trip_id": trip.trip_id,
+                "line": trip.line,
+                "headsign": trip.headsign,
+                "end_delay_s": tram.delay_s,
+                "max_delay_s": max_delay,
+            })
+            tram.trip_seg = len(trip.stops) - 1
+            tram.set_static(trip.stops[-1].stop, TramStatus.LAYOVER)
             at_stop = trip.stops[-1].stop
             route_offset += len(trip.stops)
 
@@ -348,7 +377,7 @@ class TramMotion:
                     if prev_slot is None or prev_slot[0] is not slot_res:
                         if slot_res.count > 0:
                             pos = road.point_at_distance(current_dist) if road else current_stop
-                            tram.set_static(pos, TramStatus.WAIT)
+                            tram.set_static(pos, TramStatus.WAIT, road, current_dist)
                         slot_req = slot_res.request()
                         yield slot_req
                         if prev_slot is not None:
@@ -360,7 +389,7 @@ class TramMotion:
                     p_lock = p_stop.lock or p_stop.init_simpy(self.env)
                     if p_lock.count > 0:
                         pos = road.point_at_distance(current_dist) if road else current_stop
-                        tram.set_static(pos, TramStatus.WAIT)
+                        tram.set_static(pos, TramStatus.WAIT, road, current_dist)
                     p_req = p_lock.request()
                     yield p_req
                     active_pass_reqs[idx] = (p_lock, p_req)
@@ -378,7 +407,7 @@ class TramMotion:
                     next_block = payload
                     if next_block.count > 0:
                         pos = road.point_at_distance(current_dist) if road else current_stop
-                        tram.set_static(pos, TramStatus.WAIT)
+                        tram.set_static(pos, TramStatus.WAIT, road, current_dist)
 
                     next_req = next_block.request()
                     yield next_req
@@ -403,7 +432,7 @@ class TramMotion:
             # Oczekiwanie na wolny peron docelowy w odległości STOP_BUFFER_M (45 m) przed słupkiem
             if stop_lock.count > 0:
                 pos = road.point_at_distance(current_dist) if road else current_stop
-                tram.set_static(pos, TramStatus.WAIT)
+                tram.set_static(pos, TramStatus.WAIT, road, current_dist)
 
             stop_req = stop_lock.request()
             yield stop_req
@@ -456,6 +485,8 @@ class TramMotion:
                         line=tram.line,
                         headsign=tram.headsign,
                         delay_s=tram.delay_s,
+                        trip_id=tram.current_trip.trip_id if tram.current_trip is not None else "",
+                        progress=tram.trip_progress,
                         load=tram.load,
                         capacity=tram.capacity,
                         fullness=tram.fullness,
