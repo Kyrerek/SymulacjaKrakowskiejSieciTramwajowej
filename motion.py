@@ -15,6 +15,11 @@ PASS_CLEAR_M = 15.0      # ile metrów za mijanym peronem zwalnia blokadę
 PASS_LATERAL_M = 7.0     # maksymalna odległość w bok od osi toru (tolerancja przesunięcia słupka w GTFS)
 PASS_MIN_DIR_COS = 0.6   # zgodność kierunku jazdy (ignoruje przystanki w przeciwną stronę)
 
+# Parametry łączenia współbieżnych bloków torowych między różnymi odcinkami (wspólne torowisko)
+TRACK_LATERAL_M = 7.0
+TRACK_LONGITUDINAL_M = TRAM_SPACING_M * 0.55
+TRACK_MIN_DIR_COS = 0.6
+
 _LAT_TO_M = 111_320.0
 _LON_TO_M = 111_320.0 * math.cos(math.radians(50.06))
 
@@ -114,6 +119,82 @@ def _find_pass_through_stops(
     return result
 
 
+def _road_pose_at(road: StopRoad, dist: float) -> tuple[float, float, float, float] | None:
+    """Zwraca (x, y, ux, uy) w metrach dla pozycji `dist` na odcinku."""
+    if road.total_length <= 2.0:
+        return None
+    pm = road.point_at_distance(dist)
+    pa = road.point_at_distance(max(0.0, dist - 5.0))
+    pb = road.point_at_distance(min(road.total_length, dist + 5.0))
+    xm, ym = _to_xy(pm.lat, pm.lon)
+    xa, ya = _to_xy(pa.lat, pa.lon)
+    xb, yb = _to_xy(pb.lat, pb.lon)
+    seg_len = math.hypot(xb - xa, yb - ya)
+    if seg_len <= 1e-6:
+        return None
+    return xm, ym, (xb - xa) / seg_len, (yb - ya) / seg_len
+
+
+@dataclass(slots=True)
+class _TrackCell:
+    x: float
+    y: float
+    ux: float
+    uy: float
+    resource: simpy.Resource
+
+
+class _TrackBlockGrid:
+    """Indeks przestrzenno-kierunkowy współdzielący zasoby bloków na wspólnych torach."""
+
+    def __init__(self, cell_size: float = TRAM_SPACING_M):
+        self.cell_size = cell_size
+        self._buckets: dict[tuple[int, int], list[_TrackCell]] = {}
+
+    def _bucket_key(self, x: float, y: float) -> tuple[int, int]:
+        return int(math.floor(x / self.cell_size)), int(math.floor(y / self.cell_size))
+
+    def get_or_create(
+        self,
+        x: float,
+        y: float,
+        ux: float,
+        uy: float,
+        fallback_res: simpy.Resource,
+        exclude: set[simpy.Resource] | None = None,
+    ) -> simpy.Resource:
+        gx, gy = self._bucket_key(x, y)
+        best_cell: _TrackCell | None = None
+        best_d2 = float("inf")
+
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for cell in self._buckets.get((gx + dx, gy + dy), ()):
+                    if exclude and cell.resource in exclude:
+                        continue
+                    if (ux * cell.ux + uy * cell.uy) < TRACK_MIN_DIR_COS:
+                        continue
+                    vx = x - cell.x
+                    vy = y - cell.y
+                    lateral = abs(-vx * cell.uy + vy * cell.ux)
+                    if lateral > TRACK_LATERAL_M:
+                        continue
+                    longitudinal = abs(vx * cell.ux + vy * cell.uy)
+                    if longitudinal > TRACK_LONGITUDINAL_M:
+                        continue
+                    d2 = vx * vx + vy * vy
+                    if d2 < best_d2:
+                        best_d2 = d2
+                        best_cell = cell
+
+        if best_cell is not None:
+            return best_cell.resource
+
+        cell = _TrackCell(x, y, ux, uy, fallback_res)
+        self._buckets.setdefault((gx, gy), []).append(cell)
+        return fallback_res
+
+
 @dataclass(slots=True)
 class SimulationSample:
     tram_id: str
@@ -139,19 +220,10 @@ class TramMotion:
         self.stop_time = stop_time
         self.target_time_step = float(target_time_step)
         self.samples: list[SimulationSample] = []
-        self._shared_approach_slots: dict[tuple[str, int], simpy.Resource] = {}
 
     @property
     def current_time(self) -> datetime:
         return self.start_time + timedelta(seconds=self.env.now)
-
-    def _get_approach_slot(self, stop_id: str, slot_from_end: int) -> simpy.Resource:
-        key = (stop_id, slot_from_end)
-        res = self._shared_approach_slots.get(key)
-        if res is None:
-            res = simpy.Resource(self.env, capacity=1)
-            self._shared_approach_slots[key] = res
-        return res
 
     def run_trams(self, trams: list[Tram]) -> list[SimulationSample]:
         self.samples = []
@@ -168,9 +240,9 @@ class TramMotion:
             key=lambda t: t.schedule[0].departure if t.schedule else t.start_time,
         )
 
-        # Wspólne zasoby peronów oraz slotów dojazdowych przed przystankiem końcowym
+        # Wspólne zasoby peronów oraz bloków na współbieżnych odcinkach torowiska
         shared_stop_locks: dict[str, simpy.Resource] = {}
-        self._shared_approach_slots = {}
+        track_grid = _TrackBlockGrid(TRAM_SPACING_M)
         all_stops: dict[str, Stop] = {}
         unique_roads: list[StopRoad] = []
         seen_road_ids: set[int] = set()
@@ -198,20 +270,30 @@ class TramMotion:
                             TRAM_SPACING_M,
                             STOP_BUFFER_M,
                         )
-                        end_id = str(road.end.id)
                         merged_blocks: list[tuple[simpy.Resource, float]] = []
-                        num_blocks = len(raw_blocks)
-                        for idx, (res, dist) in enumerate(raw_blocks):
-                            # slot_from_end = 0 to blok najbliżej przystanku końcowego (STOP_BUFFER_M przed peronem)
-                            slot_from_end = num_blocks - 1 - idx
-                            slot_key = (end_id, slot_from_end)
-                            if slot_key not in self._shared_approach_slots:
-                                self._shared_approach_slots[slot_key] = res
-                            shared_res = self._shared_approach_slots[slot_key]
+                        older_resources: set[simpy.Resource] = set()
+                        prev_dist = 0.0
+                        for res, dist in raw_blocks:
+                            mid_dist = 0.5 * (prev_dist + dist) if dist > prev_dist + 1e-6 else dist
+                            pose = _road_pose_at(road, mid_dist)
+                            if pose is not None:
+                                shared_res = track_grid.get_or_create(
+                                    *pose,
+                                    fallback_res=res,
+                                    exclude=older_resources,
+                                )
+                            else:
+                                shared_res = res
 
-                            if merged_blocks and abs(merged_blocks[-1][1] - dist) <= 1.0:
+                            prev_dist = dist
+                            if merged_blocks and (
+                                abs(merged_blocks[-1][1] - dist) <= 1.0
+                                or merged_blocks[-1][0] is shared_res
+                            ):
                                 merged_blocks[-1] = (shared_res, dist)
                             else:
+                                if merged_blocks:
+                                    older_resources.add(merged_blocks[-1][0])
                                 merged_blocks.append((shared_res, dist))
                         road._queue_blocks = merged_blocks
 
@@ -276,18 +358,17 @@ class TramMotion:
 
             # Peron początkowy kursu zajęty przez cały postój przed odjazdem.
             first_lock = first.stop.lock or first.stop.init_simpy(self.env)
-            # Opóźniony tramwaj nie powinien być oznaczany jako oczekujący na pętli,
-            # nawet jeśli do planowanego odjazdu kolejnego kursu zostało jeszcze trochę
-            # czasu. W takim przypadku kolejny kurs zaczyna od razu po zwolnieniu peronu.
-            can_layover = at_stop is None or tram.delay_s <= 0.0
+            # Status LAYOVER obowiązuje tylko wtedy, gdy tramwaj rzeczywiście czeka na
+            # planowany odjazd (self.current_time < first.departure). Jeśli opóźnienie
+            # pochłonęło całą przerwę na pętli, tramwaj rusza od razu bez postoju LAYOVER.
             if first_lock.count > 0:
                 tram.set_static(first.stop, TramStatus.WAIT)
-            elif can_layover and first.departure > self.current_time:
+            elif first.departure > self.current_time:
                 tram.set_static(first.stop, TramStatus.LAYOVER)
             first_req = first_lock.request()
             yield first_req
             first.stop.reserve(tram)
-            if can_layover and first.departure > self.current_time:
+            if first.departure > self.current_time:
                 tram.set_static(first.stop, TramStatus.LAYOVER)
 
             if tram.passengers is not None:
@@ -295,7 +376,7 @@ class TramMotion:
                 yield from self._wait_until(first.departure - timedelta(seconds=BOARD_BEFORE_DEPARTURE_S))
                 tram.set_static(first.stop, TramStatus.DWEL)
                 yield self.env.timeout(tram.dwell_delay(self.current_time, first.stop))
-                if can_layover and first.departure > self.current_time:
+                if first.departure > self.current_time:
                     tram.set_static(first.stop, TramStatus.LAYOVER)
 
             yield from self._wait_until(first.departure)
@@ -323,7 +404,6 @@ class TramMotion:
             if (
                 next_trip is not None
                 and next_trip.stops[0].stop.id == trip.stops[-1].stop.id
-                and tram.delay_s <= 0.0
                 and self.current_time < next_trip.departure
             ):
                 tram.set_static(trip.stops[-1].stop, TramStatus.LAYOVER)
@@ -344,41 +424,24 @@ class TramMotion:
         pass_stops: list[tuple[Stop, float, float]] = getattr(road, "_pass_through_stops", []) if road else []
 
         # Zdarzenia wzdłuż odcinka posortowane po dystansie i priorytecie.
-        # Każdy blok i slot rezerwujemy na POCZĄTKU jego przedziału (zanim tramwaj dojedzie do końca).
+        # Każdy blok rezerwujemy na POCZĄTKU jego przedziału (zanim tramwaj dojedzie do końca).
         # Priorytety w tym samym punkcie:
-        # 0 = zwolnienie mijanego peronu, 1 = rezerwacja slotu przed mijanym peronem,
-        # 2 = rezerwacja mijanego peronu (zwalnia slot 0), 3 = rezerwacja bloku kolejki przed peronem docelowym
+        # 0 = zwolnienie mijanego peronu, 1 = rezerwacja mijanego peronu,
+        # 2 = rezerwacja bloku torowego (współdzielonego po geometrii i kierunku)
         events: list[tuple[float, int, str, object]] = []
         for idx, (p_stop, hit_dist, clear_d) in enumerate(pass_stops):
-            p_id = str(p_stop.id)
             approach_d = max(0.0, hit_dist - STOP_BUFFER_M)
-
-            pass_slots: list[tuple[int, float]] = []
-            slot_idx = 0
-            slot_end = approach_d
-            while True:
-                slot_start = max(0.0, slot_end - TRAM_SPACING_M)
-                pass_slots.append((slot_idx, slot_start))
-                if slot_start <= 0.0:
-                    break
-                slot_end = slot_start
-                slot_idx += 1
-            pass_slots.reverse()
-
-            for s_idx, s_start in pass_slots:
-                events.append((s_start, 1, "acquire_pass_slot", (idx, p_id, s_idx)))
-            events.append((approach_d, 2, "acquire_pass_stop", (idx, p_stop)))
+            events.append((approach_d, 1, "acquire_pass_stop", (idx, p_stop)))
             events.append((clear_d, 0, "release_pass_stop", idx))
 
         prev_block_end = 0.0
         for next_block, block_end in blocks:
-            events.append((prev_block_end, 3, "acquire_track", next_block))
+            events.append((prev_block_end, 2, "acquire_track", next_block))
             prev_block_end = block_end
         events.sort(key=lambda e: (e[0], e[1]))
 
         current_dist = 0.0
         block, block_req = None, None
-        active_pass_slots: dict[int, tuple[simpy.Resource, object]] = {}
         active_pass_reqs: dict[int, tuple[simpy.Resource, object]] = {}
 
         try:
@@ -387,21 +450,7 @@ class TramMotion:
                     yield from self._drive_segment(tram, road, current_dist, ev_dist, total_travel)
                     current_dist = ev_dist
 
-                if ev_type == "acquire_pass_slot":
-                    idx, p_id, s_idx = payload
-                    slot_res = self._get_approach_slot(p_id, s_idx)
-                    prev_slot = active_pass_slots.get(idx)
-                    if prev_slot is None or prev_slot[0] is not slot_res:
-                        if slot_res.count > 0:
-                            pos = road.point_at_distance(current_dist) if road else current_stop
-                            tram.set_static(pos, TramStatus.WAIT, road, current_dist)
-                        slot_req = slot_res.request()
-                        yield slot_req
-                        if prev_slot is not None:
-                            prev_slot[0].release(prev_slot[1])
-                        active_pass_slots[idx] = (slot_res, slot_req)
-
-                elif ev_type == "acquire_pass_stop":
+                if ev_type == "acquire_pass_stop":
                     idx, p_stop = payload
                     p_lock = p_stop.lock or p_stop.init_simpy(self.env)
                     if p_lock.count > 0:
@@ -411,10 +460,6 @@ class TramMotion:
                     yield p_req
                     active_pass_reqs[idx] = (p_lock, p_req)
 
-                    slot_pair = active_pass_slots.pop(idx, None)
-                    if slot_pair is not None:
-                        slot_pair[0].release(slot_pair[1])
-
                 elif ev_type == "release_pass_stop":
                     pair = active_pass_reqs.pop(payload, None)
                     if pair is not None:
@@ -422,6 +467,8 @@ class TramMotion:
 
                 elif ev_type == "acquire_track":
                     next_block = payload
+                    if next_block is block:
+                        continue
                     if next_block.count > 0:
                         pos = road.point_at_distance(current_dist) if road else current_stop
                         tram.set_static(pos, TramStatus.WAIT, road, current_dist)
@@ -437,10 +484,6 @@ class TramMotion:
             if road and prev_block_end > current_dist + 1e-6:
                 yield from self._drive_segment(tram, road, current_dist, prev_block_end, total_travel)
                 current_dist = prev_block_end
-
-            for slot_res, slot_req in active_pass_slots.values():
-                slot_res.release(slot_req)
-            active_pass_slots.clear()
 
             for p_lock, p_req in active_pass_reqs.values():
                 p_lock.release(p_req)
@@ -476,8 +519,6 @@ class TramMotion:
             tram.current_stop = None
             stop_lock.release(stop_req)
         finally:
-            for slot_res, slot_req in active_pass_slots.values():
-                slot_res.release(slot_req)
             for p_lock, p_req in active_pass_reqs.values():
                 p_lock.release(p_req)
             if block is not None and block_req is not None:
